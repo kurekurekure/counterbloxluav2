@@ -1,7 +1,6 @@
--- CounterBlox UI v3.1 | dx9ware | By kure | @anticurve
+-- CounterBlox UI v3.2 | dx9ware | By kure | @anticurve
 -- GitHub main script (counterbloxlua). Executed every frame by loader.lua.
--- seraph9 UI requires the whole script to re-run each frame; network fetches
--- are cached by seraph's dx9.Get/loadstring hooks, so this is cheap.
+-- Bump BUILD + loader SCRIPT_VERSION together when you push updates.
 
 config = _G.counterblox_config or {
 	urls = {
@@ -88,6 +87,16 @@ if S == nil then
 		rcs_x = 0;
 		rcs_y = 0;
 		bomb_t0 = nil;
+		items = {
+			weapons = {};
+			grenades = {};
+			midair = {};
+			smokes = {};
+			fires = {};
+		};
+		radar_x = nil;
+		radar_y = nil;
+		radar_drag = nil;
 		cache = {
 			frame = 0;
 			players = {};
@@ -102,6 +111,13 @@ if S == nil then
 	};
 	_G.__cb_state = S;
 end
+S.items = S.items or {
+	weapons = {};
+	grenades = {};
+	midair = {};
+	smokes = {};
+	fires = {};
+};
 local cache = S.cache;
 
 -- Load / refresh seraph9 every frame (cached fetch). Re-running it refreshes
@@ -184,8 +200,27 @@ local function valid_pointer(ptr)
 	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
 end
 
+local BUILD = "3.2";
+
 local function menu_open()
-	return _G._sr and _G._sr.visible == true;
+	if _G._sr then
+		if _G._sr.visible == true then return true; end
+		if _G._sr.open == true then return true; end
+	end
+	if type(library) == "table" and library.opened == true then return true; end
+	return false;
+end
+
+local function shift_held()
+	local key = dx9.GetKey();
+	if key == "[LSHIFT]" or key == "[RSHIFT]" then return true; end
+	local keys = dx9.GetKeys();
+	if type(keys) == "table" then
+		for _, k in ipairs(keys) do
+			if k == "[LSHIFT]" or k == "[RSHIFT]" then return true; end
+		end
+	end
+	return false;
 end
 
 local function screen_center()
@@ -391,7 +426,7 @@ add_rgb(s_extra, "chams_team", "team", config.players.chams_team_color);
 s_extra:toggle({ name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled; tip = "Only show enemies."; });
 
 local s_hud = col_world:section({ name = "hud" });
-s_hud:toggle({ name = "2d radar"; flag = "radar_enabled"; default = config.hud.radar_enabled ~= false; tip = "Mini radar showing nearby enemies."; });
+s_hud:toggle({ name = "2d radar"; flag = "radar_enabled"; default = config.hud.radar_enabled ~= false; tip = "Drag header with LMB (menu open or hold Shift)."; });
 s_hud:toggle({ name = "snaplines"; flag = "snaplines"; default = config.hud.snaplines == true; tip = "Lines from crosshair to enemies."; });
 
 local s_world = col_world:section({ name = "world" });
@@ -445,7 +480,7 @@ s_config:button({
 
 if not S.greeted then
 	S.greeted = true;
-	notify("CounterBlox UI v3.1 loaded");
+	notify("CounterBlox UI v" .. BUILD .. " loaded");
 end
 
 ----------------------------------------------------------------------
@@ -651,28 +686,93 @@ local function draw_radar()
 	if not cache.local_pos then return; end
 
 	local sw = dx9.size().width;
-	local size = 110;
-	local rx = sw - size - 12;
-	local ry = 36;
-	local cx = rx + size / 2;
-	local cy = ry + size / 2;
-	local scale = size / 120;
+	local sh = dx9.size().height;
+	local size = 118;
+	local header = 18;
+	local accent = { 121, 96, 180 };
+	local bg = { 12, 12, 14 };
+	local border = { 38, 38, 44 };
 
-	dx9.DrawFilledBox({ rx, ry }, { rx + size, ry + size }, { 15, 15, 15 });
-	dx9.DrawBox({ rx, ry }, { rx + size, ry + size }, { 45, 45, 45 });
-	dx9.DrawLine({ cx - 4, cy }, { cx + 4, cy }, { 121, 96, 180 });
-	dx9.DrawLine({ cx, cy - 4 }, { cx, cy + 4 }, { 121, 96, 180 });
+	if S.radar_x == nil then
+		S.radar_x = sw - size - 14;
+		S.radar_y = 34;
+	end
+
+	local rx = math.floor(S.radar_x);
+	local ry = math.floor(S.radar_y);
+	local map_y = ry + header;
+	local map_h = size - header;
+	local cx = rx + size / 2;
+	local cy = map_y + map_h / 2;
+	local scale = map_h / 130;
+
+	-- Drag header: menu open OR hold Shift (seraph visibility flag varies by build).
+	local can_drag = menu_open() or shift_held();
+	if can_drag then
+		local mouse = dx9.GetMouse();
+		local mx, my = mouse.x, mouse.y;
+		if dx9.isLeftClickHeld() then
+			if S.radar_drag then
+				S.radar_x = mx - S.radar_drag.ox;
+				S.radar_y = my - S.radar_drag.oy;
+				rx = math.floor(S.radar_x);
+				ry = math.floor(S.radar_y);
+				map_y = ry + header;
+				cy = map_y + map_h / 2;
+			elseif mx >= rx and mx <= rx + size and my >= ry and my <= ry + header then
+				S.radar_drag = { ox = mx - rx; oy = my - ry; };
+			end
+		else
+			S.radar_drag = nil;
+		end
+	else
+		S.radar_drag = nil;
+	end
+
+	S.radar_x = math.max(0, math.min(sw - size, S.radar_x));
+	S.radar_y = math.max(0, math.min(sh - size, S.radar_y));
+	rx = math.floor(S.radar_x);
+	ry = math.floor(S.radar_y);
+	map_y = ry + header;
+	cy = map_y + map_h / 2;
+
+	dx9.DrawFilledBox({ rx, ry }, { rx + size, ry + size }, bg);
+	dx9.DrawFilledBox({ rx, ry }, { rx + size, ry + header }, { 18, 18, 22 });
+	dx9.DrawFilledBox({ rx, ry + header - 1 }, { rx + size, ry + header }, accent);
+	dx9.DrawBox({ rx, ry }, { rx + size, ry + size }, border);
+	dx9.DrawString({ rx + 8, ry + 4 }, { 200, 200, 210 }, "RADAR");
+
+	local grid = { 55, 55, 62 };
+	dx9.DrawLine({ rx + 1, cy }, { rx + size - 1, cy }, grid);
+	dx9.DrawLine({ cx, map_y + 1 }, { cx, ry + size - 1 }, grid);
+	local ring_r = map_h / 2 - 6;
+	for i = 1, 2 do
+		local r = ring_r * (i / 2);
+		local prev;
+		for seg = 0, 24 do
+			local a = (2 * math.pi / 24) * seg;
+			local pt = { cx + r * math.cos(a), cy + r * math.sin(a) };
+			if prev then dx9.DrawLine(prev, pt, { 42, 42, 50 }); end
+			prev = pt;
+		end
+	end
 
 	for _, entry in ipairs(get_player_entries()) do
 		local dx = (entry.root_pos.x - cache.local_pos.x) * scale;
 		local dz = (entry.root_pos.z - cache.local_pos.z) * scale;
+		local dist = math.sqrt(dx * dx + dz * dz);
+		local max_r = ring_r - 2;
+		if dist > max_r and dist > 0 then
+			dx = dx / dist * max_r;
+			dz = dz / dist * max_r;
+		end
 		local px = cx + dx;
 		local py = cy + dz;
-		px = math.max(rx + 3, math.min(rx + size - 3, px));
-		py = math.max(ry + 3, math.min(ry + size - 3, py));
-		local dot = entry.is_teammate and { 0, 180, 255 } or { 255, 60, 60 };
-		dx9.DrawFilledBox({ px - 2, py - 2 }, { px + 2, py + 2 }, dot);
+		local dot = entry.is_teammate and { 72, 168, 255 } or { 255, 72, 72 };
+		dx9.DrawCircle({ px, py }, dot, 3);
 	end
+
+	dx9.DrawCircle({ cx, cy }, accent, 2);
 end
 
 local function draw_bomb_timer()
@@ -830,11 +930,17 @@ local function run_bomb_esp()
 	end
 end
 
-local function run_weapon_esp()
-	if not flag_on("esp_enabled") or not flag_on("weapons_enabled") then return; end
-	if cache.frame % 2 ~= 0 or not cache.debris then return; end
+----------------------------------------------------------------------
+-- World item scan (throttled) + draw (every frame — prevents strobe)
+----------------------------------------------------------------------
+local function scan_world_items()
+	local items = S.items;
+	items.weapons = {};
+	items.grenades = {};
+	items.midair = {};
 
-	local color = rgb("weapons");
+	if not cache.debris then return; end
+
 	for _, item in next, dx9.GetChildren(cache.debris) do
 		if valid_pointer(dx9.FindFirstChild(item, "Ammo"))
 			and valid_pointer(dx9.FindFirstChild(item, "StoredAmmo"))
@@ -843,105 +949,134 @@ local function run_weapon_esp()
 			if WEAPON_NAMES[name] then
 				local mag = dx9.FindFirstChild(item, "Mag");
 				local pos = get_position(mag);
-				local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-				if s then
+				if pos then
 					local text = name;
 					if flag_on("weapons_show_ammo") then
 						local ammo = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
 						if ammo then text = name .. " [" .. tostring(ammo) .. "]"; end
 					end
-					dx9.DrawString({ s.x - dx9.CalcTextWidth(text) / 2, s.y }, color, text);
+					items.weapons[#items.weapons + 1] = { pos = pos; text = text; };
+				end
+			end
+		elseif dx9.GetType(item) == "MeshPart" then
+			local n = dx9.GetName(item);
+			if GRENADE_NAMES[n] then
+				local pos = get_position(item);
+				if pos then
+					items.grenades[#items.grenades + 1] = { pos = pos; label = n; };
+				end
+			elseif n == "Model" then
+				local pos = get_position(item);
+				if pos then
+					items.midair[#items.midair + 1] = { pos = pos; };
 				end
 			end
 		end
 	end
 end
 
-local function run_grenade_esp()
-	if not flag_on("esp_enabled") or not flag_on("grenades_enabled") then return; end
-	if cache.frame % 2 ~= 0 or not cache.debris then return; end
+local function scan_radius_items()
+	local items = S.items;
+	items.smokes = {};
+	items.fires = {};
 
-	local color = rgb("grenades");
-	for _, item in next, dx9.GetChildren(cache.debris) do
-		if dx9.GetType(item) == "MeshPart" and GRENADE_NAMES[dx9.GetName(item)] then
-			local pos = get_position(item);
-			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-			if s then
-				local n = dx9.GetName(item);
-				dx9.DrawString({ s.x - dx9.CalcTextWidth(n) / 2, s.y }, color, n);
-			end
-		end
-	end
-end
-
-local function run_midair_esp()
-	if not flag_on("esp_enabled") or not flag_on("midair_grenades_enabled") then return; end
-	if cache.frame % 2 ~= 0 or not cache.debris then return; end
-
-	local color = rgb("midair");
-	for _, item in next, dx9.GetChildren(cache.debris) do
-		if dx9.GetType(item) == "MeshPart" and dx9.GetName(item) == "Model" then
-			local pos = get_position(item);
-			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-			if s then
-				dx9.DrawString({ s.x - 24, s.y }, color, "GRENADE");
-				dx9.DrawCircle({ s.x, s.y }, color, 6);
-			end
-		end
-	end
-end
-
-local function run_smoke_radius()
-	if not flag_on("esp_enabled") or not flag_on("smoke_radius_enabled") then return; end
-	if cache.frame % 3 ~= 0 or not cache.ray_ignore then return; end
+	if not cache.ray_ignore then return; end
 
 	local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
-	if not smokes then return; end
+	if smokes then
+		for _, smoke in next, dx9.GetChildren(smokes) do
+			if dx9.GetName(smoke) == "Smoke" then
+				local pos = get_position(smoke);
+				if pos then items.smokes[#items.smokes + 1] = { pos = pos; }; end
+			end
+		end
+	end
 
-	local color = rgb("smoke");
-	for _, smoke in next, dx9.GetChildren(smokes) do
-		if dx9.GetName(smoke) == "Smoke" then
-			local pos = get_position(smoke);
-			if pos then
-				local gy = pos.y - 0.5;
-				local prev;
-				for i = 0, 16 do
-					local a = (2 * math.pi / 16) * i;
-					local pt = world_to_screen_loose(pos.x + 10.5 * math.cos(a), gy, pos.z + 10.5 * math.sin(a));
-					if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, color); end
-					if pt then prev = { pt.x, pt.y }; end
-				end
+	local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
+	if fires then
+		for _, fire in next, dx9.GetChildren(fires) do
+			if dx9.GetName(fire) == "Fire" then
+				local pos = get_position(fire);
+				if pos then items.fires[#items.fires + 1] = { pos = pos; }; end
 			end
 		end
 	end
 end
 
-local function run_molotov_radius()
-	if not flag_on("esp_enabled") or not flag_on("mol_radius_enabled") then return; end
-	if cache.frame % 3 ~= 0 or not cache.ray_ignore then return; end
+local function draw_weapon_esp()
+	if not flag_on("esp_enabled") or not flag_on("weapons_enabled") then return; end
 
-	local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
-	if not fires then return; end
+	local color = rgb("weapons");
+	for _, entry in ipairs(S.items.weapons) do
+		local s = world_to_screen_loose(entry.pos.x, entry.pos.y, entry.pos.z);
+		if s then
+			dx9.DrawString({ s.x - dx9.CalcTextWidth(entry.text) / 2, s.y }, color, entry.text);
+		end
+	end
+end
+
+local function draw_grenade_esp()
+	if not flag_on("esp_enabled") or not flag_on("grenades_enabled") then return; end
+
+	local color = rgb("grenades");
+	for _, entry in ipairs(S.items.grenades) do
+		local s = world_to_screen_loose(entry.pos.x, entry.pos.y, entry.pos.z);
+		if s then
+			dx9.DrawString({ s.x - dx9.CalcTextWidth(entry.label) / 2, s.y }, color, entry.label);
+		end
+	end
+end
+
+local function draw_midair_esp()
+	if not flag_on("esp_enabled") or not flag_on("midair_grenades_enabled") then return; end
+
+	local color = rgb("midair");
+	for _, entry in ipairs(S.items.midair) do
+		local s = world_to_screen_loose(entry.pos.x, entry.pos.y, entry.pos.z);
+		if s then
+			dx9.DrawString({ s.x - 24, s.y }, color, "GRENADE");
+			dx9.DrawCircle({ s.x, s.y }, color, 6);
+		end
+	end
+end
+
+local function draw_smoke_radius()
+	if not flag_on("esp_enabled") or not flag_on("smoke_radius_enabled") then return; end
+
+	local color = rgb("smoke");
+	for _, entry in ipairs(S.items.smokes) do
+		local pos = entry.pos;
+		local gy = pos.y - 0.5;
+		local prev;
+		for i = 0, 16 do
+			local a = (2 * math.pi / 16) * i;
+			local pt = world_to_screen_loose(pos.x + 10.5 * math.cos(a), gy, pos.z + 10.5 * math.sin(a));
+			if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, color); end
+			if pt then prev = { pt.x, pt.y }; end
+		end
+	end
+end
+
+local function draw_molotov_radius()
+	if not flag_on("esp_enabled") or not flag_on("mol_radius_enabled") then return; end
 
 	local color = rgb("mol");
-	for _, fire in next, dx9.GetChildren(fires) do
-		if dx9.GetName(fire) == "Fire" then
-			local pos = get_position(fire);
-			if pos then
-				local gy = pos.y - 0.5;
-				local hs = 12;
-				local c = {
-					world_to_screen_loose(pos.x - hs, gy, pos.z - hs),
-					world_to_screen_loose(pos.x + hs, gy, pos.z - hs),
-					world_to_screen_loose(pos.x + hs, gy, pos.z + hs),
-					world_to_screen_loose(pos.x - hs, gy, pos.z + hs),
-				};
-				if c[1] and c[2] and c[3] and c[4] then
-					dx9.DrawLine({ c[1].x, c[1].y }, { c[2].x, c[2].y }, color);
-					dx9.DrawLine({ c[2].x, c[2].y }, { c[3].x, c[3].y }, color);
-					dx9.DrawLine({ c[3].x, c[3].y }, { c[4].x, c[4].y }, color);
-					dx9.DrawLine({ c[4].x, c[4].y }, { c[1].x, c[1].y }, color);
-				end
+	for _, entry in ipairs(S.items.fires) do
+		local pos = entry.pos;
+		if pos then
+			local gy = pos.y - 0.5;
+			local hs = 12;
+			local c = {
+				world_to_screen_loose(pos.x - hs, gy, pos.z - hs),
+				world_to_screen_loose(pos.x + hs, gy, pos.z - hs),
+				world_to_screen_loose(pos.x + hs, gy, pos.z + hs),
+				world_to_screen_loose(pos.x - hs, gy, pos.z + hs),
+			};
+			if c[1] and c[2] and c[3] and c[4] then
+				dx9.DrawLine({ c[1].x, c[1].y }, { c[2].x, c[2].y }, color);
+				dx9.DrawLine({ c[2].x, c[2].y }, { c[3].x, c[3].y }, color);
+				dx9.DrawLine({ c[3].x, c[3].y }, { c[4].x, c[4].y }, color);
+				dx9.DrawLine({ c[4].x, c[4].y }, { c[1].x, c[1].y }, color);
 			end
 		end
 	end
@@ -952,17 +1087,19 @@ end
 ----------------------------------------------------------------------
 pcall(function()
 	refresh_cache();
+	scan_world_items();
+	scan_radius_items();
 	run_rcs();
 	run_aimbot();
 	run_player_esp();
 	run_chinahat();
 	run_chams();
 	run_bomb_esp();
-	run_weapon_esp();
-	run_grenade_esp();
-	run_midair_esp();
-	run_smoke_radius();
-	run_molotov_radius();
+	draw_weapon_esp();
+	draw_grenade_esp();
+	draw_midair_esp();
+	draw_smoke_radius();
+	draw_molotov_radius();
 	draw_fov_circle();
 	draw_snaplines();
 	draw_radar();
