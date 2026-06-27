@@ -1,12 +1,7 @@
 -- CounterBlox ESP | dx9ware | By kure | @anticurve
--- GitHub main script (counterbloxlua) — load via loader.lua, or paste loader only in LUA tab.
-
-if _G.CounterBlox and _G.CounterBlox.ready and _G.CounterBlox.Run and _G.CounterBlox.window then
-	_G.CounterBlox.Run();
-	return;
-end
-
-local CB = {};
+-- GitHub main script (counterbloxlua). Executed every frame by loader.lua.
+-- seraph9 UI requires the whole script to re-run each frame; network fetches
+-- are cached by seraph's dx9.Get/loadstring hooks, so this is cheap.
 
 config = _G.counterblox_config or {
 	urls = {
@@ -33,7 +28,7 @@ config = _G.counterblox_config or {
 	};
 	players = {
 		teamcheck_enabled = true;
-		player_esp_enabled = false;
+		player_esp_enabled = true;
 		player_boxes = true;
 		player_hp = true;
 		player_names = true;
@@ -67,48 +62,57 @@ if _G.counterblox_config == nil then
 	_G.counterblox_config = config;
 end
 config = _G.counterblox_config;
+config.settings = config.settings or {};
 config.combat = config.combat or {};
 config.world = config.world or {};
+config.players = config.players or {};
+config.items = config.items or {};
 
-local function parse_toggle_key(keybind)
-	if type(keybind) ~= "string" then return "F2"; end
-	return keybind:match("%[(.-)%]") or keybind;
+-- Persistent state across frames (this chunk re-runs every frame).
+local S = _G.__cb_state;
+if S == nil then
+	S = {
+		greeted = false;
+		rainbow_t = 0;
+		rainbow_i = 1;
+		rainbow_fc = 0;
+		cache = {
+			frame = 0;
+			players = {};
+			local_pos = nil;
+			local_team = nil;
+			local_player = nil;
+			datamodel = nil;
+			workspace = nil;
+			debris = nil;
+			ray_ignore = nil;
+			rcs_y = 0;
+		};
+	};
+	_G.__cb_state = S;
+end
+local cache = S.cache;
+
+-- Load / refresh seraph9 every frame (cached fetch). Re-running it refreshes
+-- input (key/mouse) which the menu's Render closure reads.
+do
+	local ui_url = config.urls.UI or config.urls.DXLibUI
+		or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
+	local src = dx9.Get(ui_url);
+	if type(src) == "string" and src ~= "" then
+		local chunk = loadstring(src);
+		if chunk then chunk(); end
+	end
+end
+
+if type(library) ~= "table" or type(library.Window) ~= "function" then
+	-- UI failed to load (bad fetch). Show console so the error is visible.
+	dx9.ShowConsole(true);
+	return;
 end
 
 local function notify(msg)
-	if type(send_notif) == "function" then
-		send_notif(msg);
-	else
-		dx9.ShowConsole(true);
-	end
-end
-
-local function load_ui_library()
-	if type(library) == "table" and type(library.Window) == "function" then
-		return true;
-	end
-	local ui_url = config.urls.UI or config.urls.DXLibUI
-		or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
-	local source = dx9.Get(ui_url);
-	if type(source) ~= "string" or source == "" then
-		dx9.ShowConsole(true);
-		return false;
-	end
-	local chunk, err = loadstring(source);
-	if not chunk then
-		dx9.ShowConsole(true);
-		return false;
-	end
-	chunk();
-	if type(library) ~= "table" or type(library.Window) ~= "function" then
-		dx9.ShowConsole(true);
-		return false;
-	end
-	return true;
-end
-
-if not load_ui_library() then
-	return;
+	if type(send_notif) == "function" then send_notif(msg); end
 end
 
 local function flag_on(name)
@@ -135,32 +139,12 @@ local function rgb(prefix)
 	};
 end
 
-local function set_rgb_flags(prefix, color)
-	library.flags[prefix .. "_r"] = color[1];
-	library.flags[prefix .. "_g"] = color[2];
-	library.flags[prefix .. "_b"] = color[3];
-end
-
+-- Color sliders own their values via seraph flags (default applied once).
 local function add_rgb(section, prefix, label, default)
-	set_rgb_flags(prefix, default);
-	section:slider({ name = label .. " · R", flag = prefix .. "_r", min = 0, max = 255, default = default[1], interval = 1, suffix = "" });
-	section:slider({ name = label .. " · G", flag = prefix .. "_g", min = 0, max = 255, default = default[2], interval = 1, suffix = "" });
-	section:slider({ name = label .. " · B", flag = prefix .. "_b", min = 0, max = 255, default = default[3], interval = 1, suffix = "" });
+	section:slider({ name = label .. " R", flag = prefix .. "_r", min = 0, max = 255, default = default[1], interval = 1 });
+	section:slider({ name = label .. " G", flag = prefix .. "_g", min = 0, max = 255, default = default[2], interval = 1 });
+	section:slider({ name = label .. " B", flag = prefix .. "_b", min = 0, max = 255, default = default[3], interval = 1 });
 end
-
-local cache = {
-	frame = 0;
-	players = {};
-	local_pos = nil;
-	local_team = nil;
-	local_player = nil;
-	datamodel = nil;
-	workspace = nil;
-	debris = nil;
-	ray_ignore = nil;
-	lighting = nil;
-	rcs_y = 0;
-};
 
 local function get_position(instance)
 	local pos = dx9.GetPosition(instance);
@@ -200,16 +184,15 @@ local function should_skip_player(player_inst, is_teammate)
 	return false;
 end
 
-local function refresh_cache(force)
+local function refresh_cache()
 	cache.frame = cache.frame + 1;
-	if not force and cache.frame % 8 ~= 0 and cache.datamodel then return; end
+	if cache.frame % 8 ~= 0 and cache.datamodel then return; end
 
 	cache.datamodel = dx9.GetDatamodel();
 	if not cache.datamodel then return; end
 
 	local players_folder = dx9.FindFirstChild(cache.datamodel, "Players");
 	cache.workspace = dx9.FindFirstChild(cache.datamodel, "Workspace");
-	cache.lighting = dx9.FindFirstChild(cache.datamodel, "Lighting");
 	cache.players = players_folder and dx9.GetChildren(players_folder) or {};
 	cache.debris = cache.workspace and dx9.FindFirstChild(cache.workspace, "Debris") or nil;
 	cache.ray_ignore = cache.workspace and dx9.FindFirstChild(cache.workspace, "Ray_Ignore") or nil;
@@ -287,7 +270,14 @@ local function get_player_entries()
 	return entries;
 end
 
--- UI (once)
+----------------------------------------------------------------------
+-- UI (rebuilt every frame; seraph stores state in _G._sr)
+----------------------------------------------------------------------
+local function parse_toggle_key(keybind)
+	if type(keybind) ~= "string" then return "F2"; end
+	return keybind:match("%[(.-)%]") or keybind;
+end
+
 local window = library:Window({
 	name = "Counterblox ESP | dx9ware | By kure | @anticurve";
 	toggle_key = parse_toggle_key(config.settings.menu_toggle_keybind);
@@ -304,34 +294,18 @@ local s_aim = combat_ms:get_tab("aimbot");
 local s_rcs = combat_ms:get_tab("rcs");
 
 s_aim:toggle({
-	name = "enabled"; flag = "aimbot_enabled";
-	default = config.combat.aimbot_enabled;
-	callback = function(v) config.combat.aimbot_enabled = v; notify("aimbot " .. (v and "on" or "off")); end;
+	name = "enabled"; flag = "aimbot_enabled"; default = config.combat.aimbot_enabled;
+	callback = function(v) notify("aimbot " .. (v and "on" or "off")); end;
 });
 s_aim:keybind({ name = "hold key"; flag = "aimbot_key"; default = "MBUTTON"; });
-s_aim:dropdown({
-	name = "mode"; flag = "aimbot_mode";
-	items = { "normal", "silent", "legit" };
-	default = config.combat.aimbot_mode or "normal";
-});
-s_aim:toggle({
-	name = "only rmb"; flag = "only_rmb";
-	default = config.combat.only_rmb;
-	tip = "Only aim while RMB is held.";
-});
-s_aim:slider({
-	name = "smoothing"; flag = "smoothing";
-	min = 1; max = 100; default = config.combat.smoothing or 50; interval = 1;
-});
-s_aim:slider({
-	name = "fov"; flag = "aimbot_fov";
-	min = 10; max = 360; default = config.combat.aimbot_fov or 90; interval = 5; suffix = " deg";
-});
+s_aim:dropdown({ name = "mode"; flag = "aimbot_mode"; items = { "normal", "silent", "legit" }; default = config.combat.aimbot_mode or "normal"; });
+s_aim:toggle({ name = "only rmb"; flag = "only_rmb"; default = config.combat.only_rmb; tip = "Only aim while RMB is held."; });
+s_aim:slider({ name = "smoothing"; flag = "smoothing"; min = 1; max = 100; default = config.combat.smoothing or 50; interval = 1; });
+s_aim:slider({ name = "fov"; flag = "aimbot_fov"; min = 10; max = 360; default = config.combat.aimbot_fov or 90; interval = 5; suffix = " deg"; });
 
 s_rcs:toggle({
-	name = "enabled"; flag = "rcs_enabled";
-	default = config.combat.rcs_enabled;
-	callback = function(v) config.combat.rcs_enabled = v; notify("rcs " .. (v and "on" or "off")); end;
+	name = "enabled"; flag = "rcs_enabled"; default = config.combat.rcs_enabled;
+	callback = function(v) notify("rcs " .. (v and "on" or "off")); end;
 });
 s_rcs:slider({ name = "horizontal"; flag = "rcs_h"; min = 0; max = 100; default = config.combat.rcs_h or 80; interval = 1; suffix = "%"; });
 s_rcs:slider({ name = "vertical"; flag = "rcs_v"; min = 0; max = 100; default = config.combat.rcs_v or 80; interval = 1; suffix = "%"; });
@@ -341,54 +315,31 @@ local col_world = tab_visuals:column();
 
 local s_player_esp = col_player_vis:section({ name = "player esp" });
 s_player_esp:toggle({
-	name = "enabled"; flag = "player_esp_enabled";
-	default = config.players.player_esp_enabled;
-	callback = function(v) config.players.player_esp_enabled = v; notify("player esp " .. (v and "on" or "off")); end;
+	name = "enabled"; flag = "player_esp_enabled"; default = config.players.player_esp_enabled;
+	callback = function(v) notify("player esp " .. (v and "on" or "off")); end;
 });
 s_player_esp:toggle({ name = "boxes"; flag = "player_boxes"; default = config.players.player_boxes ~= false; });
 s_player_esp:toggle({ name = "health bar"; flag = "player_hp"; default = config.players.player_hp ~= false; });
 s_player_esp:toggle({ name = "names"; flag = "player_names"; default = config.players.player_names ~= false; });
-s_player_esp:slider({
-	name = "max dist"; flag = "player_max_dist";
-	min = 10; max = 2000; default = config.players.player_max_dist or 500; interval = 10; suffix = " st";
-});
-add_rgb(s_player_esp, "player_esp", "esp color", config.players.player_esp_color or { 255, 255, 255 });
+s_player_esp:slider({ name = "max dist"; flag = "player_max_dist"; min = 10; max = 2000; default = config.players.player_max_dist or 500; interval = 10; suffix = " st"; });
+add_rgb(s_player_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
 
 local s_extra = col_player_vis:section({ name = "extra visuals" });
-s_extra:toggle({
-	name = "chinahat"; flag = "chinahat_enabled"; default = config.players.chinahat_enabled;
-	callback = function(v) config.players.chinahat_enabled = v; end;
-});
+s_extra:toggle({ name = "chinahat"; flag = "chinahat_enabled"; default = config.players.chinahat_enabled; });
 s_extra:toggle({ name = "rainbow hat"; flag = "chinahat_rainbow"; default = config.players.chinahat_rainbow; });
-add_rgb(s_extra, "chinahat", "hat color", config.players.chinahat_color);
-s_extra:toggle({
-	name = "chams"; flag = "chams_enabled"; default = config.players.chams_enabled;
-	tip = "Wireframe body parts (expensive — use sparingly).";
-	callback = function(v) config.players.chams_enabled = v; end;
-});
-add_rgb(s_extra, "chams_enemy", "enemy chams", config.players.chams_enemy_color);
-add_rgb(s_extra, "chams_team", "team chams", config.players.chams_team_color);
-s_extra:toggle({
-	name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled;
-	tip = "Only show enemies for player visuals.";
-});
+add_rgb(s_extra, "chinahat", "hat", config.players.chinahat_color);
+s_extra:toggle({ name = "chams"; flag = "chams_enabled"; default = config.players.chams_enabled; tip = "Wireframe body boxes through walls."; });
+add_rgb(s_extra, "chams_enemy", "enemy", config.players.chams_enemy_color);
+add_rgb(s_extra, "chams_team", "team", config.players.chams_team_color);
+s_extra:toggle({ name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled; tip = "Only show enemies."; });
 
 local s_world = col_world:section({ name = "world" });
-s_world:toggle({
-	name = "no fog"; flag = "no_fog"; default = config.world.no_fog;
-	tip = "Push fog distance to maximum.";
-	callback = function(v) config.world.no_fog = v; notify("no fog " .. (v and "on" or "off")); end;
-});
-s_world:slider({
-	name = "fog end"; flag = "fog_end";
-	min = 100; max = 100000; default = config.world.fog_end or 100000; interval = 100; suffix = " st";
-	tip = "Target FogEnd when no fog is enabled.";
-});
+s_world:toggle({ name = "no fog"; flag = "no_fog"; default = config.world.no_fog; tip = "Reserved (no dx9 fog-write API)."; });
 
-local s_esp_master = col_world:section({ name = "master" });
-s_esp_master:toggle({
+local s_master = col_world:section({ name = "master" });
+s_master:toggle({
 	name = "esp enabled"; flag = "esp_enabled"; default = config.settings.esp_enabled;
-	callback = function(v) config.settings.esp_enabled = v; notify("esp " .. (v and "on" or "off")); end;
+	callback = function(v) notify("esp " .. (v and "on" or "off")); end;
 });
 
 local col_items_left = tab_items:column();
@@ -396,33 +347,30 @@ local col_items_right = tab_items:column();
 
 local s_bombs = col_items_left:section({ name = "bombs" });
 s_bombs:toggle({ name = "bomb esp"; flag = "bombs_enabled"; default = config.items.bombs_enabled; });
-add_rgb(s_bombs, "bombs", "bomb color", config.items.bombs_color);
+add_rgb(s_bombs, "bombs", "bomb", config.items.bombs_color);
 
 local s_grenades = col_items_left:section({ name = "grenades" });
 s_grenades:toggle({ name = "dropped"; flag = "grenades_enabled"; default = config.items.grenades_enabled; });
-add_rgb(s_grenades, "grenades", "grenade color", config.items.grenades_color);
+add_rgb(s_grenades, "grenades", "nade", config.items.grenades_color);
 
 local s_radius = col_items_left:section({ name = "radius" });
 s_radius:toggle({ name = "smoke"; flag = "smoke_radius_enabled"; default = config.items.smoke_radius_enabled; });
-add_rgb(s_radius, "smoke", "smoke color", config.items.smoke_radius_color);
+add_rgb(s_radius, "smoke", "smoke", config.items.smoke_radius_color);
 s_radius:toggle({ name = "molotov"; flag = "mol_radius_enabled"; default = config.items.molotov_radius_enabled; });
-add_rgb(s_radius, "mol", "mol color", config.items.molotov_radius_color);
+add_rgb(s_radius, "mol", "mol", config.items.molotov_radius_color);
 
 local s_weapons = col_items_right:section({ name = "weapons" });
 s_weapons:toggle({ name = "weapon esp"; flag = "weapons_enabled"; default = config.items.weapons_enabled; });
 s_weapons:toggle({ name = "show ammo"; flag = "weapons_show_ammo"; default = config.items.weapons_show_ammo; });
-add_rgb(s_weapons, "weapons", "weapon color", config.items.weapons_color);
+add_rgb(s_weapons, "weapons", "weapon", config.items.weapons_color);
 
 local s_midair = col_items_right:section({ name = "midair" });
 s_midair:toggle({ name = "midair nades"; flag = "midair_grenades_enabled"; default = config.items.midair_grenades_enabled; });
-add_rgb(s_midair, "midair", "midair color", config.items.midair_grenades_color);
+add_rgb(s_midair, "midair", "midair", config.items.midair_grenades_color);
 
 local col_config = tab_config:column();
 local s_config = col_config:section({ name = "config" });
-s_config:toggle({
-	name = "watermark"; flag = "watermark"; default = config.settings.watermark_enabled ~= false;
-	tip = "Draggable FPS watermark.";
-});
+s_config:toggle({ name = "watermark"; flag = "watermark"; default = config.settings.watermark_enabled ~= false; tip = "Draggable FPS watermark."; });
 s_config:button({
 	name = "print flags";
 	callback = function()
@@ -433,22 +381,25 @@ s_config:button({
 	end;
 });
 
-CB.window = window;
-notify("counterblox loaded");
+if not S.greeted then
+	S.greeted = true;
+	notify("counterblox loaded");
+end
 
+----------------------------------------------------------------------
 -- Drawing helpers
+----------------------------------------------------------------------
 local rainbowColors = {
 	{ 255, 0, 0 }, { 255, 127, 0 }, { 255, 255, 0 }, { 0, 255, 0 },
 	{ 0, 0, 255 }, { 75, 0, 130 }, { 148, 0, 211 },
 };
-local rainbow_t, rainbow_i, rainbow_fc = 0, 1, 0;
 
 local function lerp(a, b, t) return a + (b - a) * t; end
 
 local function rainbow_color()
-	local s = rainbowColors[rainbow_i];
-	local e = rainbowColors[(rainbow_i % #rainbowColors) + 1];
-	return { lerp(s[1], e[1], rainbow_t), lerp(s[2], e[2], rainbow_t), lerp(s[3], e[3], rainbow_t) };
+	local s = rainbowColors[S.rainbow_i];
+	local e = rainbowColors[(S.rainbow_i % #rainbowColors) + 1];
+	return { lerp(s[1], e[1], S.rainbow_t), lerp(s[2], e[2], S.rainbow_t), lerp(s[3], e[3], S.rainbow_t) };
 end
 
 local function draw_box_2d(x1, y1, x2, y2, color)
@@ -460,11 +411,10 @@ end
 
 local function draw_health_bar(x, y, h, hp, max_hp, color)
 	local ratio = math.max(0, math.min(1, hp / math.max(max_hp, 1)));
-	local bar_w = 3;
 	local fill_h = h * ratio;
-	dx9.DrawBox({ x - bar_w - 2, y }, { x - 2, y + h }, { 40, 40, 40 });
+	dx9.DrawBox({ x - 5, y }, { x - 2, y + h }, { 40, 40, 40 });
 	if fill_h > 0 then
-		dx9.DrawFilledBox({ x - bar_w - 1, y + h - fill_h }, { x - 3, y + h }, color);
+		dx9.DrawFilledBox({ x - 4, y + h - fill_h }, { x - 3, y + h }, color);
 	end
 end
 
@@ -485,18 +435,13 @@ local GRENADE_NAMES = {
 	["Smoke Grenade"] = true, ["HE Grenade"] = true, ["Flashbang"] = true, ["Molotov"] = true,
 };
 
-local function addVec(v1, v2)
-	return { x = v1.x + v2.x, y = v1.y + v2.y, z = v1.z + v2.z };
-end
-local function scaleVec(v, s)
-	return { x = v.x * s, y = v.y * s, z = v.z * s };
-end
+local function addVec(v1, v2) return { x = v1.x + v2.x, y = v1.y + v2.y, z = v1.z + v2.z }; end
+local function scaleVec(v, s) return { x = v.x * s, y = v.y * s, z = v.z * s }; end
 
 local function draw_cham_box(position, cframe, size, color)
 	local hs = { x = size.x / 2, y = size.y / 2, z = size.z / 2 };
 	local min_x, min_y, max_x, max_y;
 	local any = false;
-
 	for dx = -1, 1, 2 do
 		for dy = -1, 1, 2 do
 			for dz = -1, 1, 2 do
@@ -521,10 +466,9 @@ local function draw_cham_box(position, cframe, size, color)
 	end
 end
 
-local function apply_fog()
-	-- No fog write in dx9 docs; toggle kept for UI parity with example.
-end
-
+----------------------------------------------------------------------
+-- Feature runners
+----------------------------------------------------------------------
 local function sync_aimbot_settings()
 	dx9.SetAimbotValue("fov", flag_num("aimbot_fov", 90));
 	dx9.SetAimbotValue("smoothness", flag_num("smoothing", 50));
@@ -532,8 +476,6 @@ local function sync_aimbot_settings()
 	local mode = flag_str("aimbot_mode", "normal");
 	if mode == "silent" then
 		dx9.SetAimbotValue("type", 0);
-	elseif mode == "legit" then
-		dx9.SetAimbotValue("type", 1);
 	else
 		dx9.SetAimbotValue("type", 1);
 	end
@@ -555,8 +497,7 @@ local function run_aimbot()
 		if screen then
 			local d = math.sqrt((screen.x - cx) ^ 2 + (screen.y - cy) ^ 2);
 			if d <= fov_limit and (not best_dist or d < best_dist) then
-				best = screen;
-				best_dist = d;
+				best = screen; best_dist = d;
 			end
 		end
 	end
@@ -572,8 +513,7 @@ local function run_aimbot()
 	if best then
 		local smooth = math.max(1, flag_num("smoothing", 50));
 		local sens = math.max(1, math.floor(100 - smooth * 0.5));
-		local mode = flag_str("aimbot_mode", "normal");
-		if mode == "silent" then
+		if flag_str("aimbot_mode", "normal") == "silent" then
 			dx9.ThirdPersonAim({ best.x, best.y }, smooth, smooth);
 		else
 			dx9.FirstPersonAim({ best.x, best.y }, smooth, sens);
@@ -582,15 +522,10 @@ local function run_aimbot()
 end
 
 local function run_rcs()
-	if not flag_on("rcs_enabled") then
+	if not flag_on("rcs_enabled") or not dx9.isLeftClickHeld() then
 		cache.rcs_y = 0;
 		return;
 	end
-	if not dx9.isLeftClickHeld() then
-		cache.rcs_y = 0;
-		return;
-	end
-
 	local h = flag_num("rcs_h", 80) * 0.015;
 	local v = flag_num("rcs_v", 80) * 0.04;
 	cache.rcs_y = cache.rcs_y + v;
@@ -612,24 +547,19 @@ local function run_player_esp()
 		if top and bottom then
 			local h = math.abs(bottom.y - top.y);
 			local w = h * 0.55;
-			local x1 = top.x - w / 2;
-			local x2 = top.x + w / 2;
-			local y1 = top.y;
-			local y2 = bottom.y;
+			local x1, x2 = top.x - w / 2, top.x + w / 2;
+			local y1, y2 = top.y, bottom.y;
 
 			if draw_boxes then draw_box_2d(x1, y1, x2, y2, color); end
 
 			if draw_hp and valid_pointer(entry.humanoid) then
 				local hp = dx9.GetHealth(entry.humanoid);
 				local max_hp = dx9.GetMaxHealth(entry.humanoid);
-				if hp and max_hp then
-					draw_health_bar(x1, y1, h, hp, max_hp, { 0, 255, 0 });
-				end
+				if hp and max_hp then draw_health_bar(x1, y1, h, hp, max_hp, { 0, 255, 0 }); end
 			end
 
 			if draw_names and entry.name then
-				local label = entry.name;
-				dx9.DrawString({ top.x - dx9.CalcTextWidth(label) / 2, y1 - 14 }, color, label);
+				dx9.DrawString({ top.x - dx9.CalcTextWidth(entry.name) / 2, y1 - 14 }, color, entry.name);
 			end
 		end
 	end
@@ -645,10 +575,8 @@ local function run_chinahat()
 			local dist = entry.distance > 0 and entry.distance or 50;
 			local scale = math.max(0.3, math.min(2, 50 / dist));
 			local radius = 28 * scale;
-			local height = 18 * scale;
-			local top = { screen.x, screen.y - height };
+			local top = { screen.x, screen.y - 18 * scale };
 			local seg = 8;
-
 			for i = 0, seg - 1 do
 				local a1 = (2 * math.pi / seg) * i;
 				local a2 = (2 * math.pi / seg) * (i + 1);
@@ -661,10 +589,14 @@ local function run_chinahat()
 	end
 
 	if flag_on("chinahat_rainbow") then
-		rainbow_fc = rainbow_fc + 1;
-		if rainbow_fc % 4 == 0 then
-			rainbow_t = rainbow_t + 0.06;
-			if rainbow_t >= 1 then rainbow_t = 0; rainbow_i = rainbow_i + 1; if rainbow_i > #rainbowColors then rainbow_i = 1; end end
+		S.rainbow_fc = S.rainbow_fc + 1;
+		if S.rainbow_fc % 4 == 0 then
+			S.rainbow_t = S.rainbow_t + 0.06;
+			if S.rainbow_t >= 1 then
+				S.rainbow_t = 0;
+				S.rainbow_i = S.rainbow_i + 1;
+				if S.rainbow_i > #rainbowColors then S.rainbow_i = 1; end
+			end
 		end
 	end
 end
@@ -677,7 +609,7 @@ local function run_chams()
 		local col = entry.is_teammate and rgb("chams_team") or rgb("chams_enemy");
 		for _, part_name in ipairs(CHAM_PARTS) do
 			local part = dx9.FindFirstChild(entry.character, part_name);
-			if part and partSizes[part_name] then
+			if valid_pointer(part) and partSizes[part_name] then
 				local pos = get_position(part);
 				local cf = get_cframe(part);
 				if pos and cf then draw_cham_box(pos, cf, partSizes[part_name], col); end
@@ -687,12 +619,10 @@ local function run_chams()
 end
 
 local function run_bomb_esp()
-	if not flag_on("esp_enabled") or not flag_on("bombs_enabled") then return; end
-	if not cache.workspace then return; end
+	if not flag_on("esp_enabled") or not flag_on("bombs_enabled") or not cache.workspace then return; end
 
 	local color = rgb("bombs");
-	local debris = cache.debris;
-	local dropped = debris and dx9.FindFirstChild(debris, "C4") or nil;
+	local dropped = cache.debris and dx9.FindFirstChild(cache.debris, "C4") or nil;
 	local planted = dx9.FindFirstChild(cache.workspace, "C4");
 
 	if valid_pointer(dropped) then
@@ -789,7 +719,7 @@ local function run_smoke_radius()
 					local a = (2 * math.pi / 16) * i;
 					local pt = world_to_screen_loose(pos.x + 10.5 * math.cos(a), gy, pos.z + 10.5 * math.sin(a));
 					if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, color); end
-					prev = pt and { pt.x, pt.y } or prev;
+					if pt then prev = { pt.x, pt.y }; end
 				end
 			end
 		end
@@ -810,14 +740,13 @@ local function run_molotov_radius()
 			if pos then
 				local gy = pos.y - 0.5;
 				local hs = 12;
-				local corners = {
+				local c = {
 					world_to_screen_loose(pos.x - hs, gy, pos.z - hs),
 					world_to_screen_loose(pos.x + hs, gy, pos.z - hs),
 					world_to_screen_loose(pos.x + hs, gy, pos.z + hs),
 					world_to_screen_loose(pos.x - hs, gy, pos.z + hs),
 				};
-				if corners[1] and corners[2] and corners[3] and corners[4] then
-					local c = corners;
+				if c[1] and c[2] and c[3] and c[4] then
 					dx9.DrawLine({ c[1].x, c[1].y }, { c[2].x, c[2].y }, color);
 					dx9.DrawLine({ c[2].x, c[2].y }, { c[3].x, c[3].y }, color);
 					dx9.DrawLine({ c[3].x, c[3].y }, { c[4].x, c[4].y }, color);
@@ -828,9 +757,11 @@ local function run_molotov_radius()
 	end
 end
 
-function CB.Run()
-	refresh_cache(false);
-	apply_fog();
+----------------------------------------------------------------------
+-- Frame: ESP wrapped in pcall so a draw error never blocks the menu.
+----------------------------------------------------------------------
+pcall(function()
+	refresh_cache();
 	run_rcs();
 	run_aimbot();
 	run_player_esp();
@@ -842,11 +773,6 @@ function CB.Run()
 	run_midair_esp();
 	run_smoke_radius();
 	run_molotov_radius();
-	if CB.window and type(CB.window.Render) == "function" then
-		CB.window:Render();
-	end
-end
+end);
 
-CB.ready = true;
-_G.CounterBlox = CB;
-CB.Run();
+window:Render();
