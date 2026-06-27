@@ -1,4 +1,4 @@
--- CounterBlox UI | dx9ware | By kure | @anticurve
+-- CounterBlox UI v3.1 | dx9ware | By kure | @anticurve
 -- GitHub main script (counterbloxlua). Executed every frame by loader.lua.
 -- seraph9 UI requires the whole script to re-run each frame; network fetches
 -- are cached by seraph's dx9.Get/loadstring hooks, so this is cheap.
@@ -445,7 +445,7 @@ s_config:button({
 
 if not S.greeted then
 	S.greeted = true;
-	notify("CounterBlox UI loaded");
+	notify("CounterBlox UI v3.1 loaded");
 end
 
 ----------------------------------------------------------------------
