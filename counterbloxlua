@@ -1,8 +1,9 @@
 -- CounterBlox UI | loader runs this every frame
 
-config = _G.counterblox_config or {
+local DEFAULTS = {
 	urls = {
 		UI = "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
+		Script = "https://raw.githubusercontent.com/kurekurekure/counterbloxluav2/refs/heads/main/counterbloxlua";
 	};
 	settings = {
 		menu_toggle_keybind = "[F2]";
@@ -71,16 +72,21 @@ config = _G.counterblox_config or {
 	};
 };
 
-if _G.counterblox_config == nil then
-	_G.counterblox_config = config;
+local function merge_defaults(dst, src)
+	for k, v in pairs(src) do
+		if type(v) == "table" then
+			dst[k] = dst[k] or {};
+			merge_defaults(dst[k], v);
+		elseif dst[k] == nil then
+			dst[k] = v;
+		end
+	end
 end
+
+_G.counterblox_config = _G.counterblox_config or {};
+merge_defaults(_G.counterblox_config, DEFAULTS);
 config = _G.counterblox_config;
-config.settings = config.settings or {};
-config.combat = config.combat or {};
-config.world = config.world or {};
-config.players = config.players or {};
-config.items = config.items or {};
-config.hud = config.hud or {};
+config.urls = config.urls or {};
 
 -- Persistent state (survives per-frame re-run).
 local S = _G.__cb_state;
@@ -144,7 +150,8 @@ local cache = S.cache;
 cache.player_entries_tick = cache.player_entries_tick or -1;
 
 do
-	local src = dx9.Get(config.urls.UI or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua");
+	local ui_url = config.urls.UI or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
+	local src = dx9.Get(ui_url);
 	if type(src) == "string" and src ~= "" then
 		local chunk = loadstring(src);
 		if chunk then chunk(); end
@@ -153,6 +160,7 @@ end
 
 if type(library) ~= "table" or type(library.Window) ~= "function" then
 	dx9.ShowConsole(true);
+	if type(print) == "function" then print("[CB] seraph9 failed to load"); end
 	return;
 end
 
@@ -348,7 +356,7 @@ local function valid_pointer(ptr)
 	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
 end
 
-local BUILD = "3.7";
+local BUILD = "3.8";
 local BIND_SEP = " | ";
 
 local function menu_open()
