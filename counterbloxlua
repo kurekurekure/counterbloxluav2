@@ -43,6 +43,7 @@ config = _G.counterblox_config or {
 	};
 	items = {
 		bombs_enabled = true;
+		bomb_timer = true;
 		bombs_color = { 255, 255, 0 };
 		weapons_enabled = true;
 		weapons_color = { 0, 255, 255 };
@@ -76,6 +77,9 @@ if S == nil then
 		rainbow_t = 0;
 		rainbow_i = 1;
 		rainbow_fc = 0;
+		bomb = { active = false; start = 0; ended_at = 0; };
+		picker = nil;
+		picker_lmb_prev = false;
 		cache = {
 			frame = 0;
 			players = {};
@@ -87,10 +91,16 @@ if S == nil then
 			debris = nil;
 			ray_ignore = nil;
 			rcs_y = 0;
+			weapon_list = {};
+			grenade_list = {};
+			midair_list = {};
+			smoke_list = {};
+			fire_list = {};
 		};
 	};
 	_G.__cb_state = S;
 end
+S.bomb = S.bomb or { active = false; start = 0; ended_at = 0; };
 local cache = S.cache;
 
 -- Load / refresh seraph9 every frame (cached fetch). Re-running it refreshes
@@ -139,11 +149,27 @@ local function rgb(prefix)
 	};
 end
 
--- Color sliders own their values via seraph flags (default applied once).
-local function add_rgb(section, prefix, label, default)
-	section:slider({ name = label .. " R", flag = prefix .. "_r", min = 0, max = 255, default = default[1], interval = 1 });
-	section:slider({ name = label .. " G", flag = prefix .. "_g", min = 0, max = 255, default = default[2], interval = 1 });
-	section:slider({ name = label .. " B", flag = prefix .. "_b", min = 0, max = 255, default = default[3], interval = 1 });
+-- Color values live in seraph flags (prefix_r/_g/_b). add_color registers a
+-- button that opens a custom picker popup (seraph has no native colorpicker).
+local function ensure_color_default(prefix, default)
+	if library.flags[prefix .. "_r"] == nil then library.flags[prefix .. "_r"] = default[1]; end
+	if library.flags[prefix .. "_g"] == nil then library.flags[prefix .. "_g"] = default[2]; end
+	if library.flags[prefix .. "_b"] == nil then library.flags[prefix .. "_b"] = default[3]; end
+end
+
+local function add_color(section, prefix, label, default)
+	ensure_color_default(prefix, default);
+	section:button({
+		name = label .. " color";
+		tip = "Open color picker.";
+		callback = function()
+			if S.picker and S.picker.prefix == prefix then
+				S.picker = nil;
+			else
+				S.picker = { prefix = prefix, label = label .. " color" };
+			end
+		end;
+	});
 end
 
 local function get_position(instance)
@@ -184,6 +210,17 @@ local function should_skip_player(player_inst, is_teammate)
 	return false;
 end
 
+local WEAPON_NAMES = {
+	AK47 = true, M4A1 = true, M4A4 = true, AWP = true, DesertEagle = true,
+	Scout = true, SG = true, M249 = true, Glock = true, USP = true,
+	P250 = true, FiveSeven = true, Tec9 = true, MP7 = true, P90 = true, Deagle = true,
+};
+local GRENADE_NAMES = {
+	["Smoke Grenade"] = true, ["HE Grenade"] = true, ["Flashbang"] = true, ["Molotov"] = true,
+};
+
+-- World/object scan is throttled (every 8 frames). Drawing uses the cached
+-- instance pointers EVERY frame, so item labels never strobe.
 local function refresh_cache()
 	cache.frame = cache.frame + 1;
 	if cache.frame % 8 ~= 0 and cache.datamodel then return; end
@@ -217,6 +254,44 @@ local function refresh_cache()
 					cache.local_player = p;
 					break;
 				end
+			end
+		end
+	end
+
+	-- Item instance lists (scanned here, drawn every frame).
+	cache.weapon_list = {};
+	cache.grenade_list = {};
+	cache.midair_list = {};
+	if cache.debris then
+		for _, item in next, dx9.GetChildren(cache.debris) do
+			local name = dx9.GetName(item);
+			local t = dx9.GetType(item);
+			local mag = dx9.FindFirstChild(item, "Mag");
+			local ammo = dx9.FindFirstChild(item, "Ammo");
+			if WEAPON_NAMES[name] and valid_pointer(ammo)
+				and valid_pointer(dx9.FindFirstChild(item, "StoredAmmo")) and valid_pointer(mag) then
+				cache.weapon_list[#cache.weapon_list + 1] = { mag = mag, ammo = ammo, name = name };
+			elseif t == "MeshPart" and GRENADE_NAMES[name] then
+				cache.grenade_list[#cache.grenade_list + 1] = { item = item, name = name };
+			elseif t == "MeshPart" and name == "Model" then
+				cache.midair_list[#cache.midair_list + 1] = { item = item };
+			end
+		end
+	end
+
+	cache.smoke_list = {};
+	cache.fire_list = {};
+	if cache.ray_ignore then
+		local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
+		if smokes then
+			for _, smoke in next, dx9.GetChildren(smokes) do
+				if dx9.GetName(smoke) == "Smoke" then cache.smoke_list[#cache.smoke_list + 1] = smoke; end
+			end
+		end
+		local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
+		if fires then
+			for _, fire in next, dx9.GetChildren(fires) do
+				if dx9.GetName(fire) == "Fire" then cache.fire_list[#cache.fire_list + 1] = fire; end
 			end
 		end
 	end
@@ -322,15 +397,15 @@ s_player_esp:toggle({ name = "boxes"; flag = "player_boxes"; default = config.pl
 s_player_esp:toggle({ name = "health bar"; flag = "player_hp"; default = config.players.player_hp ~= false; });
 s_player_esp:toggle({ name = "names"; flag = "player_names"; default = config.players.player_names ~= false; });
 s_player_esp:slider({ name = "max dist"; flag = "player_max_dist"; min = 10; max = 2000; default = config.players.player_max_dist or 500; interval = 10; suffix = " st"; });
-add_rgb(s_player_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
+add_color(s_player_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
 
 local s_extra = col_player_vis:section({ name = "extra visuals" });
 s_extra:toggle({ name = "chinahat"; flag = "chinahat_enabled"; default = config.players.chinahat_enabled; });
 s_extra:toggle({ name = "rainbow hat"; flag = "chinahat_rainbow"; default = config.players.chinahat_rainbow; });
-add_rgb(s_extra, "chinahat", "hat", config.players.chinahat_color);
+add_color(s_extra, "chinahat", "hat", config.players.chinahat_color);
 s_extra:toggle({ name = "chams"; flag = "chams_enabled"; default = config.players.chams_enabled; tip = "Wireframe body boxes through walls."; });
-add_rgb(s_extra, "chams_enemy", "enemy", config.players.chams_enemy_color);
-add_rgb(s_extra, "chams_team", "team", config.players.chams_team_color);
+add_color(s_extra, "chams_enemy", "enemy", config.players.chams_enemy_color);
+add_color(s_extra, "chams_team", "team", config.players.chams_team_color);
 s_extra:toggle({ name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled; tip = "Only show enemies."; });
 
 local s_world = col_world:section({ name = "world" });
@@ -347,26 +422,27 @@ local col_items_right = tab_items:column();
 
 local s_bombs = col_items_left:section({ name = "bombs" });
 s_bombs:toggle({ name = "bomb esp"; flag = "bombs_enabled"; default = config.items.bombs_enabled; });
-add_rgb(s_bombs, "bombs", "bomb", config.items.bombs_color);
+s_bombs:toggle({ name = "plant timer"; flag = "bomb_timer"; default = config.items.bomb_timer ~= false; tip = "40s countdown popup after a plant."; });
+add_color(s_bombs, "bombs", "bomb", config.items.bombs_color);
 
 local s_grenades = col_items_left:section({ name = "grenades" });
 s_grenades:toggle({ name = "dropped"; flag = "grenades_enabled"; default = config.items.grenades_enabled; });
-add_rgb(s_grenades, "grenades", "nade", config.items.grenades_color);
+add_color(s_grenades, "grenades", "nade", config.items.grenades_color);
 
 local s_radius = col_items_left:section({ name = "radius" });
 s_radius:toggle({ name = "smoke"; flag = "smoke_radius_enabled"; default = config.items.smoke_radius_enabled; });
-add_rgb(s_radius, "smoke", "smoke", config.items.smoke_radius_color);
+add_color(s_radius, "smoke", "smoke", config.items.smoke_radius_color);
 s_radius:toggle({ name = "molotov"; flag = "mol_radius_enabled"; default = config.items.molotov_radius_enabled; });
-add_rgb(s_radius, "mol", "mol", config.items.molotov_radius_color);
+add_color(s_radius, "mol", "mol", config.items.molotov_radius_color);
 
 local s_weapons = col_items_right:section({ name = "weapons" });
 s_weapons:toggle({ name = "weapon esp"; flag = "weapons_enabled"; default = config.items.weapons_enabled; });
 s_weapons:toggle({ name = "show ammo"; flag = "weapons_show_ammo"; default = config.items.weapons_show_ammo; });
-add_rgb(s_weapons, "weapons", "weapon", config.items.weapons_color);
+add_color(s_weapons, "weapons", "weapon", config.items.weapons_color);
 
 local s_midair = col_items_right:section({ name = "midair" });
 s_midair:toggle({ name = "midair nades"; flag = "midair_grenades_enabled"; default = config.items.midair_grenades_enabled; });
-add_rgb(s_midair, "midair", "midair", config.items.midair_grenades_color);
+add_color(s_midair, "midair", "midair", config.items.midair_grenades_color);
 
 local col_config = tab_config:column();
 local s_config = col_config:section({ name = "config" });
@@ -424,15 +500,6 @@ local partSizes = {
 	["Torso"] = { x = 2, y = 2, z = 1 };
 	["UpperTorso"] = { x = 2, y = 2, z = 1 };
 	["LowerTorso"] = { x = 2, y = 1.5, z = 1 };
-};
-
-local WEAPON_NAMES = {
-	AK47 = true, M4A1 = true, M4A4 = true, AWP = true, DesertEagle = true,
-	Scout = true, SG = true, M249 = true, Glock = true, USP = true,
-	P250 = true, FiveSeven = true, Tec9 = true, MP7 = true, P90 = true, Deagle = true,
-};
-local GRENADE_NAMES = {
-	["Smoke Grenade"] = true, ["HE Grenade"] = true, ["Flashbang"] = true, ["Molotov"] = true,
 };
 
 local function addVec(v1, v2) return { x = v1.x + v2.x, y = v1.y + v2.y, z = v1.z + v2.z }; end
@@ -603,7 +670,6 @@ end
 
 local function run_chams()
 	if not flag_on("esp_enabled") or not flag_on("chams_enabled") then return; end
-	if cache.frame % 2 ~= 0 then return; end
 
 	for _, entry in ipairs(get_player_entries()) do
 		local col = entry.is_teammate and rgb("chams_team") or rgb("chams_enemy");
@@ -641,120 +707,206 @@ local function run_bomb_esp()
 end
 
 local function run_weapon_esp()
-	if not flag_on("esp_enabled") or not flag_on("weapons_enabled") then return; end
-	if cache.frame % 2 ~= 0 or not cache.debris then return; end
+	if not flag_on("esp_enabled") or not flag_on("weapons_enabled") or not cache.weapon_list then return; end
 
 	local color = rgb("weapons");
-	for _, item in next, dx9.GetChildren(cache.debris) do
-		if valid_pointer(dx9.FindFirstChild(item, "Ammo"))
-			and valid_pointer(dx9.FindFirstChild(item, "StoredAmmo"))
-			and valid_pointer(dx9.FindFirstChild(item, "Mag")) then
-			local name = dx9.GetName(item);
-			if WEAPON_NAMES[name] then
-				local mag = dx9.FindFirstChild(item, "Mag");
-				local pos = get_position(mag);
-				local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-				if s then
-					local text = name;
-					if flag_on("weapons_show_ammo") then
-						local ammo = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
-						if ammo then text = name .. " [" .. tostring(ammo) .. "]"; end
-					end
-					dx9.DrawString({ s.x - dx9.CalcTextWidth(text) / 2, s.y }, color, text);
-				end
+	local show_ammo = flag_on("weapons_show_ammo");
+	for _, w in ipairs(cache.weapon_list) do
+		local pos = get_position(w.mag);
+		local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+		if s then
+			local text = w.name;
+			if show_ammo then
+				local ammo = dx9.GetIntValue(w.ammo);
+				if ammo then text = w.name .. " [" .. tostring(ammo) .. "]"; end
 			end
+			dx9.DrawString({ s.x - dx9.CalcTextWidth(text) / 2, s.y }, color, text);
 		end
 	end
 end
 
 local function run_grenade_esp()
-	if not flag_on("esp_enabled") or not flag_on("grenades_enabled") then return; end
-	if cache.frame % 2 ~= 0 or not cache.debris then return; end
+	if not flag_on("esp_enabled") or not flag_on("grenades_enabled") or not cache.grenade_list then return; end
 
 	local color = rgb("grenades");
-	for _, item in next, dx9.GetChildren(cache.debris) do
-		if dx9.GetType(item) == "MeshPart" and GRENADE_NAMES[dx9.GetName(item)] then
-			local pos = get_position(item);
-			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-			if s then
-				local n = dx9.GetName(item);
-				dx9.DrawString({ s.x - dx9.CalcTextWidth(n) / 2, s.y }, color, n);
-			end
-		end
+	for _, g in ipairs(cache.grenade_list) do
+		local pos = get_position(g.item);
+		local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+		if s then dx9.DrawString({ s.x - dx9.CalcTextWidth(g.name) / 2, s.y }, color, g.name); end
 	end
 end
 
 local function run_midair_esp()
-	if not flag_on("esp_enabled") or not flag_on("midair_grenades_enabled") then return; end
-	if cache.frame % 2 ~= 0 or not cache.debris then return; end
+	if not flag_on("esp_enabled") or not flag_on("midair_grenades_enabled") or not cache.midair_list then return; end
 
 	local color = rgb("midair");
-	for _, item in next, dx9.GetChildren(cache.debris) do
-		if dx9.GetType(item) == "MeshPart" and dx9.GetName(item) == "Model" then
-			local pos = get_position(item);
-			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-			if s then
-				dx9.DrawString({ s.x - 24, s.y }, color, "GRENADE");
-				dx9.DrawCircle({ s.x, s.y }, color, 6);
-			end
+	for _, m in ipairs(cache.midair_list) do
+		local pos = get_position(m.item);
+		local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+		if s then
+			dx9.DrawString({ s.x - 24, s.y }, color, "GRENADE");
+			dx9.DrawCircle({ s.x, s.y }, color, 6);
 		end
 	end
 end
 
 local function run_smoke_radius()
-	if not flag_on("esp_enabled") or not flag_on("smoke_radius_enabled") then return; end
-	if cache.frame % 3 ~= 0 or not cache.ray_ignore then return; end
-
-	local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
-	if not smokes then return; end
+	if not flag_on("esp_enabled") or not flag_on("smoke_radius_enabled") or not cache.smoke_list then return; end
 
 	local color = rgb("smoke");
-	for _, smoke in next, dx9.GetChildren(smokes) do
-		if dx9.GetName(smoke) == "Smoke" then
-			local pos = get_position(smoke);
-			if pos then
-				local gy = pos.y - 0.5;
-				local prev;
-				for i = 0, 16 do
-					local a = (2 * math.pi / 16) * i;
-					local pt = world_to_screen_loose(pos.x + 10.5 * math.cos(a), gy, pos.z + 10.5 * math.sin(a));
-					if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, color); end
-					if pt then prev = { pt.x, pt.y }; end
-				end
+	for _, smoke in ipairs(cache.smoke_list) do
+		local pos = get_position(smoke);
+		if pos then
+			local gy = pos.y - 0.5;
+			local prev;
+			for i = 0, 16 do
+				local a = (2 * math.pi / 16) * i;
+				local pt = world_to_screen_loose(pos.x + 10.5 * math.cos(a), gy, pos.z + 10.5 * math.sin(a));
+				if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, color); end
+				if pt then prev = { pt.x, pt.y }; end
 			end
 		end
 	end
 end
 
 local function run_molotov_radius()
-	if not flag_on("esp_enabled") or not flag_on("mol_radius_enabled") then return; end
-	if cache.frame % 3 ~= 0 or not cache.ray_ignore then return; end
-
-	local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
-	if not fires then return; end
+	if not flag_on("esp_enabled") or not flag_on("mol_radius_enabled") or not cache.fire_list then return; end
 
 	local color = rgb("mol");
-	for _, fire in next, dx9.GetChildren(fires) do
-		if dx9.GetName(fire) == "Fire" then
-			local pos = get_position(fire);
-			if pos then
-				local gy = pos.y - 0.5;
-				local hs = 12;
-				local c = {
-					world_to_screen_loose(pos.x - hs, gy, pos.z - hs),
-					world_to_screen_loose(pos.x + hs, gy, pos.z - hs),
-					world_to_screen_loose(pos.x + hs, gy, pos.z + hs),
-					world_to_screen_loose(pos.x - hs, gy, pos.z + hs),
-				};
-				if c[1] and c[2] and c[3] and c[4] then
-					dx9.DrawLine({ c[1].x, c[1].y }, { c[2].x, c[2].y }, color);
-					dx9.DrawLine({ c[2].x, c[2].y }, { c[3].x, c[3].y }, color);
-					dx9.DrawLine({ c[3].x, c[3].y }, { c[4].x, c[4].y }, color);
-					dx9.DrawLine({ c[4].x, c[4].y }, { c[1].x, c[1].y }, color);
-				end
+	for _, fire in ipairs(cache.fire_list) do
+		local pos = get_position(fire);
+		if pos then
+			local gy = pos.y - 0.5;
+			local hs = 12;
+			local c = {
+				world_to_screen_loose(pos.x - hs, gy, pos.z - hs),
+				world_to_screen_loose(pos.x + hs, gy, pos.z - hs),
+				world_to_screen_loose(pos.x + hs, gy, pos.z + hs),
+				world_to_screen_loose(pos.x - hs, gy, pos.z + hs),
+			};
+			if c[1] and c[2] and c[3] and c[4] then
+				dx9.DrawLine({ c[1].x, c[1].y }, { c[2].x, c[2].y }, color);
+				dx9.DrawLine({ c[2].x, c[2].y }, { c[3].x, c[3].y }, color);
+				dx9.DrawLine({ c[3].x, c[3].y }, { c[4].x, c[4].y }, color);
+				dx9.DrawLine({ c[4].x, c[4].y }, { c[1].x, c[1].y }, color);
 			end
 		end
 	end
+end
+
+local function run_bomb_timer()
+	if not flag_on("bomb_timer") then S.bomb.active = false; return; end
+
+	local bt = S.bomb;
+	local now = os.clock();
+	local planted = cache.workspace and dx9.FindFirstChild(cache.workspace, "C4") or nil;
+	local is_planted = false;
+	if valid_pointer(planted) and valid_pointer(dx9.FindFirstChild(planted, "Handle")) then
+		is_planted = true;
+	end
+
+	if is_planted and not bt.active then
+		bt.active = true;
+		bt.start = now;
+		bt.ended_at = 0;
+	end
+
+	if not bt.active then return; end
+
+	local remaining = 40.0 - (now - bt.start);
+
+	-- Defused / removed before detonation.
+	if not is_planted and remaining > 0 then
+		bt.active = false;
+		return;
+	end
+
+	local label, col;
+	if remaining > 0 then
+		label = string.format("BOMB  %.2f", remaining);
+		if remaining <= 10 then col = { 255, 60, 60 };
+		elseif remaining <= 20 then col = { 255, 170, 0 };
+		else col = { 235, 235, 235 }; end
+	else
+		if bt.ended_at == 0 then bt.ended_at = now; end
+		if now - bt.ended_at > 2.5 then bt.active = false; return; end
+		label = "DETONATED";
+		col = { 255, 40, 40 };
+	end
+
+	local tw = dx9.CalcTextWidth(label);
+	local w = math.max(120, tw + 24);
+	local h = 26;
+	local x = dx9.size().width / 2 - w / 2;
+	local y = 34;
+	dx9.DrawFilledBox({ x, y }, { x + w, y + h }, { 18, 18, 18 });
+	dx9.DrawBox({ x, y }, { x + w, y + h }, { 60, 60, 60 });
+	dx9.DrawFilledBox({ x, y }, { x + w, y + 2 }, col);
+	dx9.DrawString({ x + (w - tw) / 2, y + 8 }, col, label);
+end
+
+local function draw_color_picker()
+	local p = S.picker;
+	if not p then return; end
+
+	local mouse = dx9.GetMouse();
+	local mx, my = mouse.x, mouse.y;
+	local held = dx9.isLeftClickHeld();
+	local click = held and not S.picker_lmb_prev;
+
+	local w, h = 200, 132;
+	local x = dx9.size().width - w - 24;
+	local y = dx9.size().height / 2 - h / 2;
+
+	dx9.DrawFilledBox({ x, y }, { x + w, y + h }, { 20, 20, 20 });
+	dx9.DrawBox({ x, y }, { x + w, y + h }, { 60, 60, 60 });
+	dx9.DrawFilledBox({ x, y }, { x + w, y + 18 }, { 32, 32, 32 });
+	dx9.DrawString({ x + 6, y + 4 }, { 230, 230, 230 }, p.label);
+
+	-- close button
+	local close_x = x + w - 14;
+	dx9.DrawString({ close_x, y + 4 }, { 230, 120, 120 }, "x");
+	if click and mx >= close_x - 4 and mx <= x + w and my >= y and my <= y + 18 then
+		S.picker = nil;
+		S.picker_lmb_prev = held;
+		return;
+	end
+
+	local chans = { "r", "g", "b" };
+	local labels = { "R", "G", "B" };
+	local chan_cols = { { 255, 80, 80 }, { 80, 255, 80 }, { 90, 150, 255 } };
+	for i = 1, 3 do
+		local by = y + 28 + (i - 1) * 26;
+		local bx = x + 22;
+		local bw = w - 74;
+		local bh = 10;
+		local fname = p.prefix .. "_" .. chans[i];
+		local val = library.flags[fname] or 0;
+
+		dx9.DrawString({ x + 6, by - 1 }, { 200, 200, 200 }, labels[i]);
+		dx9.DrawFilledBox({ bx, by }, { bx + bw, by + bh }, { 45, 45, 45 });
+		local fw = math.floor(bw * (val / 255));
+		if fw > 0 then dx9.DrawFilledBox({ bx, by }, { bx + fw, by + bh }, chan_cols[i]); end
+		dx9.DrawBox({ bx, by }, { bx + bw, by + bh }, { 75, 75, 75 });
+		dx9.DrawString({ bx + bw + 8, by - 1 }, { 185, 185, 185 }, tostring(math.floor(val)));
+
+		if held and mx >= bx and mx <= bx + bw and my >= by - 6 and my <= by + bh + 6 then
+			local nv = math.floor((mx - bx) / bw * 255 + 0.5);
+			if nv < 0 then nv = 0; elseif nv > 255 then nv = 255; end
+			library.flags[fname] = nv;
+		end
+	end
+
+	-- preview swatch
+	local pv = {
+		library.flags[p.prefix .. "_r"] or 0,
+		library.flags[p.prefix .. "_g"] or 0,
+		library.flags[p.prefix .. "_b"] or 0,
+	};
+	dx9.DrawFilledBox({ x + 6, y + h - 16 }, { x + w - 6, y + h - 6 }, pv);
+	dx9.DrawBox({ x + 6, y + h - 16 }, { x + w - 6, y + h - 6 }, { 75, 75, 75 });
+
+	S.picker_lmb_prev = held;
 end
 
 ----------------------------------------------------------------------
@@ -776,3 +928,7 @@ pcall(function()
 end);
 
 window:Render();
+
+-- Overlays drawn on top of the menu, independent of ESP toggles.
+pcall(run_bomb_timer);
+pcall(draw_color_picker);
