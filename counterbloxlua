@@ -1,6 +1,13 @@
 -- CounterBlox ESP | dx9ware | By kure | @anticurve
--- Main script — host on GitHub. Load via loader.lua in the executor.
--- Expects _G.counterblox_config (set by loader before loadstring).
+-- GitHub main script — load once via loader.lua, then Run() each frame.
+
+if _G.CounterBlox and _G.CounterBlox.Run then
+	_G.CounterBlox.Run();
+	return;
+end
+
+local CB = {};
+_G.CounterBlox = CB;
 
 config = _G.counterblox_config or {
 	urls = {
@@ -10,6 +17,35 @@ config = _G.counterblox_config or {
 		menu_toggle_keybind = "[F2]";
 		esp_enabled = true;
 		watermark_enabled = true;
+	};
+	combat = {
+		aimbot_enabled = false;
+		aimbot_mode = "normal";
+		only_rmb = false;
+		smoothing = 50;
+		aimbot_fov = 90;
+		rcs_enabled = false;
+		rcs_h = 80;
+		rcs_v = 80;
+	};
+	world = {
+		no_fog = false;
+		fog_end = 100000;
+	};
+	players = {
+		teamcheck_enabled = true;
+		player_esp_enabled = false;
+		player_boxes = true;
+		player_hp = true;
+		player_names = true;
+		player_max_dist = 500;
+		player_esp_color = { 255, 255, 255 };
+		chinahat_enabled = false;
+		chinahat_rainbow = true;
+		chinahat_color = { 255, 0, 0 };
+		chams_enabled = false;
+		chams_enemy_color = { 255, 0, 0 };
+		chams_team_color = { 0, 255, 0 };
 	};
 	items = {
 		bombs_enabled = true;
@@ -26,36 +62,23 @@ config = _G.counterblox_config or {
 		molotov_radius_enabled = true;
 		molotov_radius_color = { 255, 165, 0 };
 	};
-	players = {
-		chinahat_enabled = false;
-		chinahat_rainbow = true;
-		chinahat_color = { 255, 0, 0 };
-		chams_enabled = false;
-		chams_enemy_color = { 255, 0, 0 };
-		chams_team_color = { 0, 255, 0 };
-		teamcheck_enabled = true;
-	};
 };
 
 if _G.counterblox_config == nil then
 	_G.counterblox_config = config;
 end
 config = _G.counterblox_config;
+config.combat = config.combat or {};
+config.world = config.world or {};
 
 local function parse_toggle_key(keybind)
-	if type(keybind) ~= "string" then
-		return "F2";
-	end
+	if type(keybind) ~= "string" then return "F2"; end
 	return keybind:match("%[(.-)%]") or keybind;
 end
 
 local function notify(msg)
-	if send_notif then
-		send_notif(msg);
-	else
-		dx9.ShowConsole(true);
-		print(msg);
-	end
+	if send_notif then send_notif(msg);
+	else dx9.ShowConsole(true); print(msg); end
 end
 
 if library == nil then
@@ -66,6 +89,18 @@ end
 
 local function flag_on(name)
 	return library.flags[name] == true;
+end
+
+local function flag_num(name, default)
+	local v = library.flags[name];
+	if type(v) == "number" then return v; end
+	return default or 0;
+end
+
+local function flag_str(name, default)
+	local v = library.flags[name];
+	if type(v) == "string" then return v; end
+	return default or "";
 end
 
 local function rgb(prefix)
@@ -89,45 +124,41 @@ local function add_rgb(section, prefix, label, default)
 	section:slider({ name = label .. " · B", flag = prefix .. "_b", min = 0, max = 255, default = default[3], interval = 1, suffix = "" });
 end
 
+local cache = {
+	frame = 0;
+	players = {};
+	local_pos = nil;
+	local_team = nil;
+	local_player = nil;
+	datamodel = nil;
+	workspace = nil;
+	debris = nil;
+	ray_ignore = nil;
+	lighting = nil;
+	fog_values = nil;
+	original_fog = nil;
+	rcs_y = 0;
+};
+
 local function get_position(instance)
 	local pos = dx9.GetPosition(instance);
-	if type(pos) == "table" and pos.x ~= nil then
-		return pos;
-	end
+	if type(pos) == "table" and pos.x ~= nil then return pos; end
 	return nil;
 end
 
-local function world_to_screen(x, y, z)
+local function world_to_screen_loose(x, y, z)
 	local screen = dx9.WorldToScreen({ x, y, z });
-	if type(screen) ~= "table" then
-		return nil;
-	end
-	if screen.x == nil or screen.y == nil then
-		return nil;
-	end
-	if screen.x < 0 or screen.y < 0 then
-		return nil;
-	end
-	local sw = dx9.size().width;
-	local sh = dx9.size().height;
-	if screen.x > sw or screen.y > sh then
-		return nil;
-	end
+	if type(screen) ~= "table" or screen.x == nil or screen.y == nil then return nil; end
+	if screen.x < 0 or screen.y < 0 then return nil; end
 	return screen;
 end
 
 local function get_cframe(part)
 	local cf = dx9.GetCFrame(part);
-	if type(cf) == "table" and cf.RightVector and cf.LookVector and cf.UpVector then
-		return cf;
-	end
+	if type(cf) == "table" and cf.RightVector and cf.LookVector and cf.UpVector then return cf; end
 	local _, right, look, up = dx9.GetCFrame(part);
 	if type(right) == "table" and type(look) == "table" and type(up) == "table" then
-		return {
-			RightVector = right;
-			LookVector = look;
-			UpVector = up;
-		};
+		return { RightVector = right; LookVector = look; UpVector = up; };
 	end
 	return nil;
 end
@@ -136,826 +167,686 @@ local function valid_pointer(ptr)
 	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
 end
 
-if _G._counterblox_window == nil then
-	local toggle_key = parse_toggle_key(config.settings.menu_toggle_keybind);
-
-	local window = library:Window({
-		name = "Counterblox ESP | dx9ware | By kure | @anticurve";
-		toggle_key = toggle_key;
-	});
-
-	local tab_visuals = window:tab({ name = "visuals" });
-	local tab_items = window:tab({ name = "items" });
-	local tab_config = window:tab({ name = "config" });
-
-	local col_players = tab_visuals:column();
-	local col_visual_settings = tab_visuals:column();
-
-	local s_players = col_players:section({ name = "players" });
-	s_players:toggle({
-		name = "chinahat esp";
-		flag = "chinahat_enabled";
-		default = config.players.chinahat_enabled;
-		tip = "Draw a cone marker above player heads.";
-		callback = function(v)
-			config.players.chinahat_enabled = v;
-			notify("chinahat " .. (v and "on" or "off"));
-		end;
-	});
-	s_players:toggle({
-		name = "rainbow chinahat";
-		flag = "chinahat_rainbow";
-		default = config.players.chinahat_rainbow;
-		tip = "Cycle chinahat colors when enabled.";
-		callback = function(v)
-			config.players.chinahat_rainbow = v;
-			notify("rainbow chinahat " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_players, "chinahat", "chinahat color", config.players.chinahat_color);
-
-	s_players:toggle({
-		name = "chams esp";
-		flag = "chams_enabled";
-		default = config.players.chams_enabled;
-		tip = "Draw 3D boxes on player body parts.";
-		callback = function(v)
-			config.players.chams_enabled = v;
-			notify("chams " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_players, "chams_enemy", "enemy chams", config.players.chams_enemy_color);
-	add_rgb(s_players, "chams_team", "team chams", config.players.chams_team_color);
-	s_players:toggle({
-		name = "team check";
-		flag = "teamcheck_enabled";
-		default = config.players.teamcheck_enabled;
-		tip = "When on, chinahat and chams only show enemies.";
-		callback = function(v)
-			config.players.teamcheck_enabled = v;
-			notify(v and "showing enemies only" or "showing all players");
-		end;
-	});
-
-	local s_esp = col_visual_settings:section({ name = "esp" });
-	s_esp:toggle({
-		name = "enabled";
-		flag = "esp_enabled";
-		default = config.settings.esp_enabled;
-		callback = function(v)
-			config.settings.esp_enabled = v;
-			notify("esp " .. (v and "on" or "off"));
-		end;
-	});
-
-	local col_items_left = tab_items:column();
-	local col_items_right = tab_items:column();
-
-	local s_bombs = col_items_left:section({ name = "bombs" });
-	s_bombs:toggle({
-		name = "bomb esp";
-		flag = "bombs_enabled";
-		default = config.items.bombs_enabled;
-		callback = function(v)
-			config.items.bombs_enabled = v;
-			notify("bomb esp " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_bombs, "bombs", "bomb color", config.items.bombs_color);
-
-	local s_grenades = col_items_left:section({ name = "grenades" });
-	s_grenades:toggle({
-		name = "dropped grenades";
-		flag = "grenades_enabled";
-		default = config.items.grenades_enabled;
-		callback = function(v)
-			config.items.grenades_enabled = v;
-			notify("grenade esp " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_grenades, "grenades", "grenade color", config.items.grenades_color);
-
-	local s_radius = col_items_left:section({ name = "grenade radius" });
-	s_radius:toggle({
-		name = "smoke radius";
-		flag = "smoke_radius_enabled";
-		default = config.items.smoke_radius_enabled;
-		callback = function(v)
-			config.items.smoke_radius_enabled = v;
-			notify("smoke radius " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_radius, "smoke", "smoke color", config.items.smoke_radius_color);
-	s_radius:toggle({
-		name = "mol radius";
-		flag = "mol_radius_enabled";
-		default = config.items.molotov_radius_enabled;
-		callback = function(v)
-			config.items.molotov_radius_enabled = v;
-			notify("mol radius " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_radius, "mol", "mol color", config.items.molotov_radius_color);
-
-	local s_weapons = col_items_right:section({ name = "weapons" });
-	s_weapons:toggle({
-		name = "weapon esp";
-		flag = "weapons_enabled";
-		default = config.items.weapons_enabled;
-		callback = function(v)
-			config.items.weapons_enabled = v;
-			notify("weapon esp " .. (v and "on" or "off"));
-		end;
-	});
-	s_weapons:toggle({
-		name = "show ammo";
-		flag = "weapons_show_ammo";
-		default = config.items.weapons_show_ammo;
-		callback = function(v)
-			config.items.weapons_show_ammo = v;
-			notify("weapon ammo " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_weapons, "weapons", "weapon color", config.items.weapons_color);
-
-	local s_midair = col_items_right:section({ name = "midair" });
-	s_midair:toggle({
-		name = "midair grenades";
-		flag = "midair_grenades_enabled";
-		default = config.items.midair_grenades_enabled;
-		callback = function(v)
-			config.items.midair_grenades_enabled = v;
-			notify("midair esp " .. (v and "on" or "off"));
-		end;
-	});
-	add_rgb(s_midair, "midair", "midair color", config.items.midair_grenades_color);
-
-	local col_config = tab_config:column();
-	local s_config = col_config:section({ name = "config" });
-	s_config:toggle({
-		name = "watermark";
-		flag = "watermark";
-		default = config.settings.watermark_enabled ~= false;
-		tip = "Draggable FPS watermark. Snap to top center, left, or right.";
-		callback = function(v)
-			config.settings.watermark_enabled = v;
-			notify("watermark " .. (v and "on" or "off"));
-		end;
-	});
-	s_config:button({
-		name = "print active flags";
-		callback = function()
-			local out = {};
-			for k, v in pairs(library.flags) do
-				out[#out + 1] = k .. "=" .. tostring(v);
-			end
-			table.sort(out);
-			notify(table.concat(out, "  ", 1, math.min(#out, 4)));
-		end;
-	});
-
-	_G._counterblox_window = window;
-	notify("counterblox esp loaded");
+local function dist3(a, b)
+	local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z;
+	return math.sqrt(dx * dx + dy * dy + dz * dz);
 end
 
-local window = _G._counterblox_window;
+local function should_skip_player(player_inst, is_teammate)
+	if player_inst == cache.local_player then return true; end
+	if flag_on("teamcheck_enabled") and is_teammate then return true; end
+	return false;
+end
 
+local function refresh_cache(force)
+	cache.frame = cache.frame + 1;
+	if not force and cache.frame % 8 ~= 0 and cache.datamodel then return; end
+
+	cache.datamodel = dx9.GetDatamodel();
+	if not cache.datamodel then return; end
+
+	local players_folder = dx9.FindFirstChild(cache.datamodel, "Players");
+	cache.workspace = dx9.FindFirstChild(cache.datamodel, "Workspace");
+	cache.lighting = dx9.FindFirstChild(cache.datamodel, "Lighting");
+	cache.players = players_folder and dx9.GetChildren(players_folder) or {};
+	cache.debris = cache.workspace and dx9.FindFirstChild(cache.workspace, "Debris") or nil;
+	cache.ray_ignore = cache.workspace and dx9.FindFirstChild(cache.workspace, "Ray_Ignore") or nil;
+
+	cache.local_pos = nil;
+	cache.local_team = nil;
+	cache.local_player = nil;
+
+	local local_info = dx9.get_localplayer();
+	if local_info and local_info.Position then
+		cache.local_pos = local_info.Position;
+	end
+
+	for _, p in next, cache.players do
+		local char = dx9.GetCharacter(p);
+		if char then
+			local root = dx9.FindFirstChild(char, "HumanoidRootPart");
+			if root then
+				local pos = get_position(root);
+				if pos and cache.local_pos and dist3(pos, cache.local_pos) < 2 then
+					cache.local_team = dx9.GetTeam(p);
+					cache.local_player = p;
+					break;
+				end
+			end
+		end
+	end
+end
+
+local function get_player_entries()
+	local entries = {};
+	local max_dist = flag_num("player_max_dist", config.players.player_max_dist or 500);
+
+	for _, player_inst in next, cache.players do
+		local char = dx9.GetCharacter(player_inst);
+		if char then
+			local is_teammate = false;
+			if cache.local_team then
+				local pt = dx9.GetTeam(player_inst);
+				if pt and pt == cache.local_team then is_teammate = true; end
+			end
+			if not should_skip_player(player_inst, is_teammate) then
+				local head = dx9.FindFirstChild(char, "Head");
+				local root = dx9.FindFirstChild(char, "HumanoidRootPart")
+					or dx9.FindFirstChild(char, "Torso")
+					or dx9.FindFirstChild(char, "UpperTorso");
+				local humanoid = dx9.FindFirstChild(char, "Humanoid");
+				if head and root then
+					local head_pos = get_position(head);
+					local root_pos = get_position(root);
+					if head_pos and root_pos then
+						local in_range = true;
+						if cache.local_pos then
+							in_range = dist3(root_pos, cache.local_pos) <= max_dist;
+						end
+						if in_range then
+							entries[#entries + 1] = {
+								player = player_inst;
+								character = char;
+								head = head;
+								root = root;
+								humanoid = humanoid;
+								name = dx9.GetName(player_inst);
+								is_teammate = is_teammate;
+								head_pos = head_pos;
+								root_pos = root_pos;
+								distance = cache.local_pos and dist3(root_pos, cache.local_pos) or 0;
+							};
+						end
+					end
+				end
+			end
+		end
+	end
+	return entries;
+end
+
+-- UI (once)
+local window = library:Window({
+	name = "Counterblox ESP | dx9ware | By kure | @anticurve";
+	toggle_key = parse_toggle_key(config.settings.menu_toggle_keybind);
+});
+
+local tab_aimbot = window:tab({ name = "aimbot" });
+local tab_visuals = window:tab({ name = "visuals" });
+local tab_items = window:tab({ name = "items" });
+local tab_config = window:tab({ name = "config" });
+
+local col_combat = tab_aimbot:column();
+local combat_ms = col_combat:multisection({ name = "combat", sections = { "aimbot", "rcs" } });
+local s_aim = combat_ms:get_tab("aimbot");
+local s_rcs = combat_ms:get_tab("rcs");
+
+s_aim:toggle({
+	name = "enabled"; flag = "aimbot_enabled";
+	default = config.combat.aimbot_enabled;
+	callback = function(v) config.combat.aimbot_enabled = v; notify("aimbot " .. (v and "on" or "off")); end;
+});
+s_aim:keybind({ name = "hold key"; flag = "aimbot_key"; default = "MBUTTON"; });
+s_aim:dropdown({
+	name = "mode"; flag = "aimbot_mode";
+	items = { "normal", "silent", "legit" };
+	default = config.combat.aimbot_mode or "normal";
+});
+s_aim:toggle({
+	name = "only rmb"; flag = "only_rmb";
+	default = config.combat.only_rmb;
+	tip = "Only aim while RMB is held.";
+});
+s_aim:slider({
+	name = "smoothing"; flag = "smoothing";
+	min = 1; max = 100; default = config.combat.smoothing or 50; interval = 1;
+});
+s_aim:slider({
+	name = "fov"; flag = "aimbot_fov";
+	min = 10; max = 360; default = config.combat.aimbot_fov or 90; interval = 5; suffix = " deg";
+});
+
+s_rcs:toggle({
+	name = "enabled"; flag = "rcs_enabled";
+	default = config.combat.rcs_enabled;
+	callback = function(v) config.combat.rcs_enabled = v; notify("rcs " .. (v and "on" or "off")); end;
+});
+s_rcs:slider({ name = "horizontal"; flag = "rcs_h"; min = 0; max = 100; default = config.combat.rcs_h or 80; interval = 1; suffix = "%"; });
+s_rcs:slider({ name = "vertical"; flag = "rcs_v"; min = 0; max = 100; default = config.combat.rcs_v or 80; interval = 1; suffix = "%"; });
+
+local col_player_vis = tab_visuals:column();
+local col_world = tab_visuals:column();
+
+local s_player_esp = col_player_vis:section({ name = "player esp" });
+s_player_esp:toggle({
+	name = "enabled"; flag = "player_esp_enabled";
+	default = config.players.player_esp_enabled;
+	callback = function(v) config.players.player_esp_enabled = v; notify("player esp " .. (v and "on" or "off")); end;
+});
+s_player_esp:toggle({ name = "boxes"; flag = "player_boxes"; default = config.players.player_boxes ~= false; });
+s_player_esp:toggle({ name = "health bar"; flag = "player_hp"; default = config.players.player_hp ~= false; });
+s_player_esp:toggle({ name = "names"; flag = "player_names"; default = config.players.player_names ~= false; });
+s_player_esp:slider({
+	name = "max dist"; flag = "player_max_dist";
+	min = 10; max = 2000; default = config.players.player_max_dist or 500; interval = 10; suffix = " st";
+});
+add_rgb(s_player_esp, "player_esp", "esp color", config.players.player_esp_color or { 255, 255, 255 });
+
+local s_extra = col_player_vis:section({ name = "extra visuals" });
+s_extra:toggle({
+	name = "chinahat"; flag = "chinahat_enabled"; default = config.players.chinahat_enabled;
+	callback = function(v) config.players.chinahat_enabled = v; end;
+});
+s_extra:toggle({ name = "rainbow hat"; flag = "chinahat_rainbow"; default = config.players.chinahat_rainbow; });
+add_rgb(s_extra, "chinahat", "hat color", config.players.chinahat_color);
+s_extra:toggle({
+	name = "chams"; flag = "chams_enabled"; default = config.players.chams_enabled;
+	tip = "Wireframe body parts (expensive — use sparingly).";
+	callback = function(v) config.players.chams_enabled = v; end;
+});
+add_rgb(s_extra, "chams_enemy", "enemy chams", config.players.chams_enemy_color);
+add_rgb(s_extra, "chams_team", "team chams", config.players.chams_team_color);
+s_extra:toggle({
+	name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled;
+	tip = "Only show enemies for player visuals.";
+});
+
+local s_world = col_world:section({ name = "world" });
+s_world:toggle({
+	name = "no fog"; flag = "no_fog"; default = config.world.no_fog;
+	tip = "Push fog distance to maximum.";
+	callback = function(v) config.world.no_fog = v; notify("no fog " .. (v and "on" or "off")); end;
+});
+s_world:slider({
+	name = "fog end"; flag = "fog_end";
+	min = 100; max = 100000; default = config.world.fog_end or 100000; interval = 100; suffix = " st";
+	tip = "Target FogEnd when no fog is enabled.";
+});
+
+local s_esp_master = col_world:section({ name = "master" });
+s_esp_master:toggle({
+	name = "esp enabled"; flag = "esp_enabled"; default = config.settings.esp_enabled;
+	callback = function(v) config.settings.esp_enabled = v; notify("esp " .. (v and "on" or "off")); end;
+});
+
+local col_items_left = tab_items:column();
+local col_items_right = tab_items:column();
+
+local s_bombs = col_items_left:section({ name = "bombs" });
+s_bombs:toggle({ name = "bomb esp"; flag = "bombs_enabled"; default = config.items.bombs_enabled; });
+add_rgb(s_bombs, "bombs", "bomb color", config.items.bombs_color);
+
+local s_grenades = col_items_left:section({ name = "grenades" });
+s_grenades:toggle({ name = "dropped"; flag = "grenades_enabled"; default = config.items.grenades_enabled; });
+add_rgb(s_grenades, "grenades", "grenade color", config.items.grenades_color);
+
+local s_radius = col_items_left:section({ name = "radius" });
+s_radius:toggle({ name = "smoke"; flag = "smoke_radius_enabled"; default = config.items.smoke_radius_enabled; });
+add_rgb(s_radius, "smoke", "smoke color", config.items.smoke_radius_color);
+s_radius:toggle({ name = "molotov"; flag = "mol_radius_enabled"; default = config.items.molotov_radius_enabled; });
+add_rgb(s_radius, "mol", "mol color", config.items.molotov_radius_color);
+
+local s_weapons = col_items_right:section({ name = "weapons" });
+s_weapons:toggle({ name = "weapon esp"; flag = "weapons_enabled"; default = config.items.weapons_enabled; });
+s_weapons:toggle({ name = "show ammo"; flag = "weapons_show_ammo"; default = config.items.weapons_show_ammo; });
+add_rgb(s_weapons, "weapons", "weapon color", config.items.weapons_color);
+
+local s_midair = col_items_right:section({ name = "midair" });
+s_midair:toggle({ name = "midair nades"; flag = "midair_grenades_enabled"; default = config.items.midair_grenades_enabled; });
+add_rgb(s_midair, "midair", "midair color", config.items.midair_grenades_color);
+
+local col_config = tab_config:column();
+local s_config = col_config:section({ name = "config" });
+s_config:toggle({
+	name = "watermark"; flag = "watermark"; default = config.settings.watermark_enabled ~= false;
+	tip = "Draggable FPS watermark.";
+});
+s_config:button({
+	name = "print flags";
+	callback = function()
+		local out = {};
+		for k, v in pairs(library.flags) do out[#out + 1] = k .. "=" .. tostring(v); end
+		table.sort(out);
+		notify(table.concat(out, "  ", 1, math.min(#out, 4)));
+	end;
+});
+
+CB.window = window;
+notify("counterblox loaded");
+
+-- Drawing helpers
 local rainbowColors = {
-	{ 255, 0, 0 };
-	{ 255, 127, 0 };
-	{ 255, 255, 0 };
-	{ 0, 255, 0 };
-	{ 0, 0, 255 };
-	{ 75, 0, 130 };
-	{ 148, 0, 211 };
+	{ 255, 0, 0 }, { 255, 127, 0 }, { 255, 255, 0 }, { 0, 255, 0 },
+	{ 0, 0, 255 }, { 75, 0, 130 }, { 148, 0, 211 },
+};
+local rainbow_t, rainbow_i, rainbow_fc = 0, 1, 0;
+
+local function lerp(a, b, t) return a + (b - a) * t; end
+
+local function rainbow_color()
+	local s = rainbowColors[rainbow_i];
+	local e = rainbowColors[(rainbow_i % #rainbowColors) + 1];
+	return { lerp(s[1], e[1], rainbow_t), lerp(s[2], e[2], rainbow_t), lerp(s[3], e[3], rainbow_t) };
+end
+
+local function draw_box_2d(x1, y1, x2, y2, color)
+	dx9.DrawLine({ x1, y1 }, { x2, y1 }, color);
+	dx9.DrawLine({ x2, y1 }, { x2, y2 }, color);
+	dx9.DrawLine({ x2, y2 }, { x1, y2 }, color);
+	dx9.DrawLine({ x1, y2 }, { x1, y1 }, color);
+end
+
+local function draw_health_bar(x, y, h, hp, max_hp, color)
+	local ratio = math.max(0, math.min(1, hp / math.max(max_hp, 1)));
+	local bar_w = 3;
+	local fill_h = h * ratio;
+	dx9.DrawBox({ x - bar_w - 2, y }, { x - 2, y + h }, { 40, 40, 40 });
+	if fill_h > 0 then
+		dx9.DrawFilledBox({ x - bar_w - 1, y + h - fill_h }, { x - 3, y + h }, color);
+	end
+end
+
+local CHAM_PARTS = { "Head", "UpperTorso", "LowerTorso", "Torso" };
+local partSizes = {
+	["Head"] = { x = 1.1, y = 1.1, z = 1.1 };
+	["Torso"] = { x = 2, y = 2, z = 1 };
+	["UpperTorso"] = { x = 2, y = 2, z = 1 };
+	["LowerTorso"] = { x = 2, y = 1.5, z = 1 };
 };
 
-if _G.transitionTime == nil then _G.transitionTime = 0; end
-if _G.colorIndex == nil then _G.colorIndex = 1; end
-if _G.frameCounter == nil then _G.frameCounter = 0; end
-
-local function lerp(a, b, t)
-	return a + (b - a) * t;
-end
-
-local function getSmoothRainbowColor()
-	local totalColors = #rainbowColors;
-	local startColor = rainbowColors[_G.colorIndex];
-	local endColor = rainbowColors[(_G.colorIndex % totalColors) + 1];
-	return {
-		lerp(startColor[1], endColor[1], _G.transitionTime);
-		lerp(startColor[2], endColor[2], _G.transitionTime);
-		lerp(startColor[3], endColor[3], _G.transitionTime);
-	};
-end
-
-local function getScaleFromDistance(targetPos, localPos)
-	if not localPos or not targetPos then
-		return 1.0;
-	end
-	local dx = targetPos.x - localPos.x;
-	local dy = targetPos.y - localPos.y;
-	local dz = targetPos.z - localPos.z;
-	local distance = math.sqrt(dx * dx + dy * dy + dz * dz);
-	local baseDistance = 50;
-	return math.max(0.3, math.min(2.0, baseDistance / distance));
-end
-
-local function getScaleFromScreen(headPos)
-	local screenPos = world_to_screen(headPos.x, headPos.y, headPos.z);
-	if not screenPos then
-		return 1.0;
-	end
-	local screenWidth = dx9.size().width;
-	local screenHeight = dx9.size().height;
-	local centerX = screenWidth / 2;
-	local centerY = screenHeight / 2;
-	local distFromCenter = math.sqrt((screenPos.x - centerX) ^ 2 + (screenPos.y - centerY) ^ 2);
-	local maxDist = math.sqrt(centerX ^ 2 + centerY ^ 2);
-	return math.max(0.4, math.min(1.5, 1.0 - (distFromCenter / maxDist) * 0.6));
-end
+local WEAPON_NAMES = {
+	AK47 = true, M4A1 = true, M4A4 = true, AWP = true, DesertEagle = true,
+	Scout = true, SG = true, M249 = true, Glock = true, USP = true,
+	P250 = true, FiveSeven = true, Tec9 = true, MP7 = true, P90 = true, Deagle = true,
+};
+local GRENADE_NAMES = {
+	["Smoke Grenade"] = true, ["HE Grenade"] = true, ["Flashbang"] = true, ["Molotov"] = true,
+};
 
 local function addVec(v1, v2)
 	return { x = v1.x + v2.x, y = v1.y + v2.y, z = v1.z + v2.z };
 end
-
-local function scaleVec(v, scale)
-	return { x = v.x * scale, y = v.y * scale, z = v.z * scale };
+local function scaleVec(v, s)
+	return { x = v.x * s, y = v.y * s, z = v.z * s };
 end
 
-local function Draw3DBox(position, cframe, size, color)
-	local halfSize = { x = size.x / 2, y = size.y / 2, z = size.z / 2 };
-	local corners = {};
+local function draw_cham_box(position, cframe, size, color)
+	local hs = { x = size.x / 2, y = size.y / 2, z = size.z / 2 };
+	local min_x, min_y, max_x, max_y;
+	local any = false;
 
 	for dx = -1, 1, 2 do
 		for dy = -1, 1, 2 do
 			for dz = -1, 1, 2 do
 				local offset = addVec(
-					addVec(
-						scaleVec(cframe.RightVector, dx * halfSize.x),
-						scaleVec(cframe.UpVector, dy * halfSize.y)
-					),
-					scaleVec(cframe.LookVector, dz * halfSize.z)
+					addVec(scaleVec(cframe.RightVector, dx * hs.x), scaleVec(cframe.UpVector, dy * hs.y)),
+					scaleVec(cframe.LookVector, dz * hs.z)
 				);
-				table.insert(corners, addVec(position, offset));
+				local w = addVec(position, offset);
+				local s = world_to_screen_loose(w.x, w.y, w.z);
+				if s then
+					any = true;
+					min_x = min_x and math.min(min_x, s.x) or s.x;
+					min_y = min_y and math.min(min_y, s.y) or s.y;
+					max_x = max_x and math.max(max_x, s.x) or s.x;
+					max_y = max_y and math.max(max_y, s.y) or s.y;
+				end
+			end
+		end
+	end
+	if any and min_x and max_x then
+		draw_box_2d(min_x, min_y, max_x, max_y, color);
+	end
+end
+
+local function find_fog_values()
+	if cache.fog_values then return cache.fog_values; end
+	if not cache.lighting then return nil; end
+	local out = {};
+	for _, child in next, dx9.GetChildren(cache.lighting) do
+		local n = dx9.GetName(child);
+		if n == "FogEnd" or n == "FogStart" then out[n] = child; end
+	end
+	cache.fog_values = out;
+	return out;
+end
+
+local function apply_fog()
+	if not flag_on("no_fog") then return; end
+	local fog = find_fog_values();
+	local target = flag_num("fog_end", 100000);
+	if fog and fog.FogEnd and dx9.SetNumValue then
+		if cache.original_fog == nil then
+			cache.original_fog = dx9.GetNumValue(fog.FogEnd);
+		end
+		dx9.SetNumValue(fog.FogEnd, target);
+	elseif fog and fog.FogEnd and dx9.SetIntValue then
+		if cache.original_fog == nil then
+			cache.original_fog = dx9.GetIntValue(fog.FogEnd);
+		end
+		dx9.SetIntValue(fog.FogEnd, target);
+	end
+end
+
+local function sync_aimbot_settings()
+	dx9.SetAimbotValue("fov", flag_num("aimbot_fov", 90));
+	dx9.SetAimbotValue("smoothness", flag_num("smoothing", 50));
+	dx9.SetAimbotValue("range", 5000);
+	local mode = flag_str("aimbot_mode", "normal");
+	if mode == "silent" then
+		dx9.SetAimbotValue("type", 0);
+	elseif mode == "legit" then
+		dx9.SetAimbotValue("type", 1);
+	else
+		dx9.SetAimbotValue("type", 1);
+	end
+end
+
+local function run_aimbot()
+	if not flag_on("aimbot_enabled") then return; end
+	if not flag_on("aimbot_key") then return; end
+	if flag_on("only_rmb") and not dx9.isRightClickHeld() then return; end
+
+	sync_aimbot_settings();
+
+	local mouse = dx9.GetMouse();
+	local cx, cy = dx9.size().width / 2, dx9.size().height / 2;
+	local fov_limit = flag_num("aimbot_fov", 90) * 4;
+	local best, best_dist;
+
+	for _, entry in ipairs(get_player_entries()) do
+		local screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y, entry.head_pos.z);
+		if screen then
+			local d = math.sqrt((screen.x - cx) ^ 2 + (screen.y - cy) ^ 2);
+			if d <= fov_limit and (not best_dist or d < best_dist) then
+				best = screen;
+				best_dist = d;
 			end
 		end
 	end
 
-	local screenPoints = {};
-	local allVisible = true;
-	for i, world in ipairs(corners) do
-		local screenPos = world_to_screen(world.x, world.y, world.z);
-		if screenPos then
-			screenPoints[i] = { x = screenPos.x, y = screenPos.y };
+	if not best then
+		local locked = dx9.GetLocked();
+		if valid_pointer(locked) then
+			local pos = get_position(locked);
+			if pos then best = world_to_screen_loose(pos.x, pos.y, pos.z); end
+		end
+	end
+
+	if best then
+		local smooth = math.max(1, flag_num("smoothing", 50));
+		local sens = math.max(1, math.floor(100 - smooth * 0.5));
+		local mode = flag_str("aimbot_mode", "normal");
+		if mode == "silent" then
+			dx9.ThirdPersonAim({ best.x, best.y }, smooth, smooth);
 		else
-			allVisible = false;
-			break;
-		end
-	end
-
-	if allVisible then
-		local edges = {
-			{ 1, 2 }, { 2, 4 }, { 4, 3 }, { 3, 1 };
-			{ 5, 6 }, { 6, 8 }, { 8, 7 }, { 7, 5 };
-			{ 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 };
-		};
-		for _, edge in ipairs(edges) do
-			local a, b = screenPoints[edge[1]], screenPoints[edge[2]];
-			if a and b then
-				dx9.DrawLine({ a.x, a.y }, { b.x, b.y }, color);
-			end
+			dx9.FirstPersonAim({ best.x, best.y }, smooth, sens);
 		end
 	end
 end
 
-local partSizes = {
-	["Head"] = { x = 1.1, y = 1.1, z = 1.1 };
-	["Torso"] = { x = 2, y = 2, z = 1 };
-	["Left Arm"] = { x = 1, y = 2, z = 1 };
-	["Right Arm"] = { x = 1, y = 2, z = 1 };
-	["Left Leg"] = { x = 1, y = 3, z = 1 };
-	["Right Leg"] = { x = 1, y = 3, z = 1 };
-	["UpperTorso"] = { x = 2, y = 2, z = 1 };
-	["LowerTorso"] = { x = 2, y = 1.5, z = 1 };
-	["LeftUpperArm"] = { x = 1, y = 2, z = 1 };
-	["RightUpperArm"] = { x = 1, y = 2, z = 1 };
-	["LeftUpperLeg"] = { x = 1, y = 3, z = 1 };
-	["RightUpperLeg"] = { x = 1, y = 3, z = 1 };
-};
+local function run_rcs()
+	if not flag_on("rcs_enabled") then
+		cache.rcs_y = 0;
+		return;
+	end
+	if not dx9.isLeftClickHeld() then
+		cache.rcs_y = 0;
+		return;
+	end
 
-local WEAPON_NAMES = {
-	AK47 = true;
-	M4A1 = true;
-	M4A4 = true;
-	AWP = true;
-	DesertEagle = true;
-	Scout = true;
-	SG = true;
-	M249 = true;
-	Glock = true;
-	USP = true;
-	P250 = true;
-	FiveSeven = true;
-	Tec9 = true;
-	MP7 = true;
-	P90 = true;
-	Deagle = true;
-};
+	local h = flag_num("rcs_h", 80) * 0.015;
+	local v = flag_num("rcs_v", 80) * 0.04;
+	cache.rcs_y = cache.rcs_y + v;
+	local mouse = dx9.GetMouse();
+	dx9.MouseMove({ mouse.x + h * 0.1, mouse.y + v });
+end
 
-local GRENADE_NAMES = {
-	["Smoke Grenade"] = true;
-	["HE Grenade"] = true;
-	["Flashbang"] = true;
-	["Molotov"] = true;
-};
+local function run_player_esp()
+	if not flag_on("esp_enabled") or not flag_on("player_esp_enabled") then return; end
 
-local function resolve_local_player(players_folder, player_instances)
-	local local_info = dx9.get_localplayer();
-	local local_pos = local_info and local_info.Position or nil;
-	local local_team = nil;
-	local local_player_instance = nil;
+	local color = rgb("player_esp");
+	local draw_boxes = flag_on("player_boxes");
+	local draw_hp = flag_on("player_hp");
+	local draw_names = flag_on("player_names");
 
-	if local_pos then
-		for _, player_instance in next, player_instances do
-			local character = dx9.GetCharacter(player_instance);
-			if character then
-				local root = dx9.FindFirstChild(character, "HumanoidRootPart");
-				if root then
-					local pos = get_position(root);
-					if pos then
-						local dist = math.sqrt(
-							(pos.x - local_pos.x) ^ 2
-								+ (pos.y - local_pos.y) ^ 2
-								+ (pos.z - local_pos.z) ^ 2
-						);
-						if dist < 2 then
-							local_team = dx9.GetTeam(player_instance);
-							local_player_instance = player_instance;
-							break;
-						end
-					end
+	for _, entry in ipairs(get_player_entries()) do
+		local top = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y + 0.5, entry.head_pos.z);
+		local bottom = world_to_screen_loose(entry.root_pos.x, entry.root_pos.y - 2.5, entry.root_pos.z);
+		if top and bottom then
+			local h = math.abs(bottom.y - top.y);
+			local w = h * 0.55;
+			local x1 = top.x - w / 2;
+			local x2 = top.x + w / 2;
+			local y1 = top.y;
+			local y2 = bottom.y;
+
+			if draw_boxes then draw_box_2d(x1, y1, x2, y2, color); end
+
+			if draw_hp and valid_pointer(entry.humanoid) then
+				local hp = dx9.GetHealth(entry.humanoid);
+				local max_hp = dx9.GetMaxHealth(entry.humanoid);
+				if hp and max_hp then
+					draw_health_bar(x1, y1, h, hp, max_hp, { 0, 255, 0 });
 				end
+			end
+
+			if draw_names and entry.name then
+				local label = entry.name;
+				dx9.DrawString({ top.x - dx9.CalcTextWidth(label) / 2, y1 - 14 }, color, label);
+			end
+		end
+	end
+end
+
+local function run_chinahat()
+	if not flag_on("esp_enabled") or not flag_on("chinahat_enabled") then return; end
+
+	for _, entry in ipairs(get_player_entries()) do
+		local screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y + 0.85, entry.head_pos.z);
+		if screen then
+			local col = flag_on("chinahat_rainbow") and rainbow_color() or rgb("chinahat");
+			local dist = entry.distance > 0 and entry.distance or 50;
+			local scale = math.max(0.3, math.min(2, 50 / dist));
+			local radius = 28 * scale;
+			local height = 18 * scale;
+			local top = { screen.x, screen.y - height };
+			local seg = 8;
+
+			for i = 0, seg - 1 do
+				local a1 = (2 * math.pi / seg) * i;
+				local a2 = (2 * math.pi / seg) * (i + 1);
+				local p1 = { screen.x + radius * math.cos(a1), screen.y + radius * math.sin(a1) * 0.45 };
+				local p2 = { screen.x + radius * math.cos(a2), screen.y + radius * math.sin(a2) * 0.45 };
+				dx9.DrawLine(p1, p2, col);
+				dx9.DrawLine(p1, top, col);
 			end
 		end
 	end
 
-	return local_pos, local_team, local_player_instance;
+	if flag_on("chinahat_rainbow") then
+		rainbow_fc = rainbow_fc + 1;
+		if rainbow_fc % 4 == 0 then
+			rainbow_t = rainbow_t + 0.06;
+			if rainbow_t >= 1 then rainbow_t = 0; rainbow_i = rainbow_i + 1; if rainbow_i > #rainbowColors then rainbow_i = 1; end end
+		end
+	end
 end
 
-if _G.ChamsESP == nil then
-	_G.ChamsESP = function()
-		if not flag_on("esp_enabled") or not flag_on("chams_enabled") then
-			return;
-		end
+local function run_chams()
+	if not flag_on("esp_enabled") or not flag_on("chams_enabled") then return; end
+	if cache.frame % 2 ~= 0 then return; end
 
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
-
-		local players_folder = dx9.FindFirstChild(datamodel, "Players");
-		if not players_folder then return; end
-
-		local player_instances = dx9.GetChildren(players_folder);
-		local _, local_team, local_player_instance = resolve_local_player(players_folder, player_instances);
-
-		for _, player_instance in next, player_instances do
-			local should_draw = player_instance ~= local_player_instance;
-			local is_teammate = false;
-
-			if should_draw and local_team then
-				local player_team = dx9.GetTeam(player_instance);
-				if player_team and player_team == local_team then
-					is_teammate = true;
-					if flag_on("teamcheck_enabled") then
-						should_draw = false;
-					end
-				end
-			end
-
-			if should_draw then
-				local character = dx9.GetCharacter(player_instance);
-				if character then
-					local chams_color = is_teammate and rgb("chams_team") or rgb("chams_enemy");
-					for _, part in next, dx9.GetChildren(character) do
-						local part_type = dx9.GetType(part);
-						local part_name = dx9.GetName(part);
-						if (part_type == "Part" or part_type == "MeshPart") and partSizes[part_name] then
-							local position = get_position(part);
-							local cframe = get_cframe(part);
-							if position and cframe then
-								Draw3DBox(position, cframe, partSizes[part_name], chams_color);
-							end
-						end
-					end
-				end
+	for _, entry in ipairs(get_player_entries()) do
+		local col = entry.is_teammate and rgb("chams_team") or rgb("chams_enemy");
+		for _, part_name in ipairs(CHAM_PARTS) do
+			local part = dx9.FindFirstChild(entry.character, part_name);
+			if part and partSizes[part_name] then
+				local pos = get_position(part);
+				local cf = get_cframe(part);
+				if pos and cf then draw_cham_box(pos, cf, partSizes[part_name], col); end
 			end
 		end
-	end;
+	end
 end
 
-if _G.ChinahatESP == nil then
-	_G.ChinahatESP = function()
-		if not flag_on("esp_enabled") or not flag_on("chinahat_enabled") then
-			return;
+local function run_bomb_esp()
+	if not flag_on("esp_enabled") or not flag_on("bombs_enabled") then return; end
+	if not cache.workspace then return; end
+
+	local color = rgb("bombs");
+	local debris = cache.debris;
+	local dropped = debris and dx9.FindFirstChild(debris, "C4") or nil;
+	local planted = dx9.FindFirstChild(cache.workspace, "C4");
+
+	if valid_pointer(dropped) then
+		local pos = get_position(dropped);
+		local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+		if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("C4") / 2, s.y }, color, "C4"); end
+	end
+	if valid_pointer(planted) then
+		local handle = dx9.FindFirstChild(planted, "Handle");
+		if valid_pointer(handle) then
+			local pos = get_position(handle);
+			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+			if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("Planted C4") / 2, s.y }, color, "Planted C4"); end
 		end
-
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
-
-		local players_folder = dx9.FindFirstChild(datamodel, "Players");
-		if not players_folder then return; end
-
-		local player_instances = dx9.GetChildren(players_folder);
-		local local_pos, local_team, local_player_instance = resolve_local_player(players_folder, player_instances);
-
-		for _, player_instance in next, player_instances do
-			local should_draw = player_instance ~= local_player_instance;
-
-			if should_draw and flag_on("teamcheck_enabled") and local_team then
-				local player_team = dx9.GetTeam(player_instance);
-				if player_team and player_team == local_team then
-					should_draw = false;
-				end
-			end
-
-			if should_draw then
-				local character = dx9.GetCharacter(player_instance);
-				if character then
-					local head = dx9.FindFirstChild(character, "Head");
-					if head then
-						local head_position = get_position(head);
-						if head_position then
-							local screen_position = world_to_screen(
-								head_position.x,
-								head_position.y + 0.85,
-								head_position.z
-							);
-							if screen_position then
-								local current_color = flag_on("chinahat_rainbow")
-										and getSmoothRainbowColor()
-									or rgb("chinahat");
-								local scale = local_pos
-										and getScaleFromDistance(head_position, local_pos)
-									or getScaleFromScreen(head_position);
-
-								local base_size = 35;
-								local cone_height = base_size * 0.7 * scale;
-								local radius = base_size * 0.9 * scale;
-								local segments = 16;
-								local base_circle = {};
-
-								for i = 0, segments do
-									local angle = (2 * math.pi / segments) * i;
-									local x = screen_position.x + radius * math.cos(angle);
-									local y = screen_position.y + radius * math.sin(angle) * 0.5;
-									table.insert(base_circle, { x, y });
-								end
-
-								local top_point = { screen_position.x, screen_position.y - cone_height };
-
-								for i = 1, #base_circle - 1 do
-									dx9.DrawLine(base_circle[i], base_circle[i + 1], current_color);
-								end
-								dx9.DrawLine(base_circle[#base_circle], base_circle[1], current_color);
-
-								for i = 1, #base_circle do
-									dx9.DrawLine(base_circle[i], top_point, current_color);
-								end
-
-								for i = 0, 19 do
-									local angle = (2 * math.pi / 20) * i;
-									local x = screen_position.x + radius * math.cos(angle);
-									local y = screen_position.y + radius * math.sin(angle) * 0.5;
-									dx9.DrawLine({ x, y }, top_point, current_color);
-								end
-							end
-						end
-					end
-				end
-			end
-		end
-
-		if flag_on("chinahat_rainbow") then
-			_G.frameCounter = _G.frameCounter + 1;
-			if _G.frameCounter % 3 == 0 then
-				_G.transitionTime = _G.transitionTime + 0.05;
-				if _G.transitionTime >= 1 then
-					_G.transitionTime = 0;
-					_G.colorIndex = _G.colorIndex + 1;
-					if _G.colorIndex > #rainbowColors then
-						_G.colorIndex = 1;
-					end
-				end
-			end
-		end
-	end;
+	end
 end
 
-if _G.WeaponESP == nil then
-	_G.WeaponESP = function()
-		if not flag_on("esp_enabled") or not flag_on("weapons_enabled") then
-			return;
-		end
+local function run_weapon_esp()
+	if not flag_on("esp_enabled") or not flag_on("weapons_enabled") then return; end
+	if cache.frame % 2 ~= 0 or not cache.debris then return; end
 
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
-
-		local workspace = dx9.FindFirstChild(datamodel, "Workspace");
-		if not workspace then return; end
-
-		local debris = dx9.FindFirstChild(workspace, "Debris");
-		if not debris then return; end
-
-		local weapon_color = rgb("weapons");
-
-		for _, item in next, dx9.GetChildren(debris) do
-			local ammo = dx9.FindFirstChild(item, "Ammo");
-			local stored_ammo = dx9.FindFirstChild(item, "StoredAmmo");
-			local mag = dx9.FindFirstChild(item, "Mag");
-			if valid_pointer(ammo) and valid_pointer(stored_ammo) and valid_pointer(mag) then
-				local weapon_name = dx9.GetName(item);
-				if WEAPON_NAMES[weapon_name] then
-					local position = get_position(mag);
-					if position then
-						local screen = world_to_screen(position.x, position.y, position.z);
-						if screen then
-							local display_text = weapon_name;
-							if flag_on("weapons_show_ammo") then
-								local current_ammo = dx9.GetIntValue(ammo);
-								if current_ammo ~= nil then
-									display_text = weapon_name .. " [" .. tostring(current_ammo) .. "]";
-								end
-							end
-							dx9.DrawString(
-								{ screen.x - (dx9.CalcTextWidth(display_text) / 2), screen.y },
-								weapon_color,
-								display_text
-							);
-						end
+	local color = rgb("weapons");
+	for _, item in next, dx9.GetChildren(cache.debris) do
+		if valid_pointer(dx9.FindFirstChild(item, "Ammo"))
+			and valid_pointer(dx9.FindFirstChild(item, "StoredAmmo"))
+			and valid_pointer(dx9.FindFirstChild(item, "Mag")) then
+			local name = dx9.GetName(item);
+			if WEAPON_NAMES[name] then
+				local mag = dx9.FindFirstChild(item, "Mag");
+				local pos = get_position(mag);
+				local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+				if s then
+					local text = name;
+					if flag_on("weapons_show_ammo") then
+						local ammo = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
+						if ammo then text = name .. " [" .. tostring(ammo) .. "]"; end
 					end
+					dx9.DrawString({ s.x - dx9.CalcTextWidth(text) / 2, s.y }, color, text);
 				end
 			end
 		end
-	end;
+	end
 end
 
-if _G.GrenadeESP == nil then
-	_G.GrenadeESP = function()
-		if not flag_on("esp_enabled") or not flag_on("grenades_enabled") then
-			return;
+local function run_grenade_esp()
+	if not flag_on("esp_enabled") or not flag_on("grenades_enabled") then return; end
+	if cache.frame % 2 ~= 0 or not cache.debris then return; end
+
+	local color = rgb("grenades");
+	for _, item in next, dx9.GetChildren(cache.debris) do
+		if dx9.GetType(item) == "MeshPart" and GRENADE_NAMES[dx9.GetName(item)] then
+			local pos = get_position(item);
+			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+			if s then
+				local n = dx9.GetName(item);
+				dx9.DrawString({ s.x - dx9.CalcTextWidth(n) / 2, s.y }, color, n);
+			end
 		end
+	end
+end
 
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
+local function run_midair_esp()
+	if not flag_on("esp_enabled") or not flag_on("midair_grenades_enabled") then return; end
+	if cache.frame % 2 ~= 0 or not cache.debris then return; end
 
-		local workspace = dx9.FindFirstChild(datamodel, "Workspace");
-		if not workspace then return; end
+	local color = rgb("midair");
+	for _, item in next, dx9.GetChildren(cache.debris) do
+		if dx9.GetType(item) == "MeshPart" and dx9.GetName(item) == "Model" then
+			local pos = get_position(item);
+			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
+			if s then
+				dx9.DrawString({ s.x - 24, s.y }, color, "GRENADE");
+				dx9.DrawCircle({ s.x, s.y }, color, 6);
+			end
+		end
+	end
+end
 
-		local debris = dx9.FindFirstChild(workspace, "Debris");
-		if not debris then return; end
+local function run_smoke_radius()
+	if not flag_on("esp_enabled") or not flag_on("smoke_radius_enabled") then return; end
+	if cache.frame % 3 ~= 0 or not cache.ray_ignore then return; end
 
-		local grenade_color = rgb("grenades");
+	local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
+	if not smokes then return; end
 
-		for _, item in next, dx9.GetChildren(debris) do
-			if dx9.GetType(item) == "MeshPart" then
-				local item_name = dx9.GetName(item);
-				if GRENADE_NAMES[item_name] then
-					local position = get_position(item);
-					if position then
-						local screen = world_to_screen(position.x, position.y, position.z);
-						if screen then
-							dx9.DrawString(
-								{ screen.x - (dx9.CalcTextWidth(item_name) / 2), screen.y },
-								grenade_color,
-								item_name
-							);
-						end
-					end
+	local color = rgb("smoke");
+	for _, smoke in next, dx9.GetChildren(smokes) do
+		if dx9.GetName(smoke) == "Smoke" then
+			local pos = get_position(smoke);
+			if pos then
+				local gy = pos.y - 0.5;
+				local prev;
+				for i = 0, 16 do
+					local a = (2 * math.pi / 16) * i;
+					local pt = world_to_screen_loose(pos.x + 10.5 * math.cos(a), gy, pos.z + 10.5 * math.sin(a));
+					if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, color); end
+					prev = pt and { pt.x, pt.y } or prev;
 				end
 			end
 		end
-	end;
+	end
 end
 
-if _G.MidairGrenadeESP == nil then
-	_G.MidairGrenadeESP = function()
-		if not flag_on("esp_enabled") or not flag_on("midair_grenades_enabled") then
-			return;
-		end
+local function run_molotov_radius()
+	if not flag_on("esp_enabled") or not flag_on("mol_radius_enabled") then return; end
+	if cache.frame % 3 ~= 0 or not cache.ray_ignore then return; end
 
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
+	local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
+	if not fires then return; end
 
-		local workspace = dx9.FindFirstChild(datamodel, "Workspace");
-		if not workspace then return; end
-
-		local debris = dx9.FindFirstChild(workspace, "Debris");
-		if not debris then return; end
-
-		local midair_color = rgb("midair");
-
-		for _, item in next, dx9.GetChildren(debris) do
-			local item_name = dx9.GetName(item);
-			local item_type = dx9.GetType(item);
-			if item_type == "MeshPart" and item_name == "Model" then
-				local position = get_position(item);
-				if position then
-					local screen = world_to_screen(position.x, position.y, position.z);
-					if screen then
-						dx9.DrawString(
-							{ screen.x - (dx9.CalcTextWidth("GRENADE") / 2), screen.y },
-							midair_color,
-							"GRENADE"
-						);
-						dx9.DrawCircle({ screen.x, screen.y }, midair_color, 8);
-					end
+	local color = rgb("mol");
+	for _, fire in next, dx9.GetChildren(fires) do
+		if dx9.GetName(fire) == "Fire" then
+			local pos = get_position(fire);
+			if pos then
+				local gy = pos.y - 0.5;
+				local hs = 12;
+				local corners = {
+					world_to_screen_loose(pos.x - hs, gy, pos.z - hs),
+					world_to_screen_loose(pos.x + hs, gy, pos.z - hs),
+					world_to_screen_loose(pos.x + hs, gy, pos.z + hs),
+					world_to_screen_loose(pos.x - hs, gy, pos.z + hs),
+				};
+				if corners[1] and corners[2] and corners[3] and corners[4] then
+					local c = corners;
+					dx9.DrawLine({ c[1].x, c[1].y }, { c[2].x, c[2].y }, color);
+					dx9.DrawLine({ c[2].x, c[2].y }, { c[3].x, c[3].y }, color);
+					dx9.DrawLine({ c[3].x, c[3].y }, { c[4].x, c[4].y }, color);
+					dx9.DrawLine({ c[4].x, c[4].y }, { c[1].x, c[1].y }, color);
 				end
 			end
 		end
-	end;
+	end
 end
 
-if _G.SmokeRadiusESP == nil then
-	_G.SmokeRadiusESP = function()
-		if not flag_on("esp_enabled") or not flag_on("smoke_radius_enabled") then
-			return;
-		end
-
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
-
-		local workspace = dx9.FindFirstChild(datamodel, "Workspace");
-		if not workspace then return; end
-
-		local ray_ignore = dx9.FindFirstChild(workspace, "Ray_Ignore");
-		if not ray_ignore then return; end
-
-		local smokes_folder = dx9.FindFirstChild(ray_ignore, "Smokes");
-		if not smokes_folder then return; end
-
-		local smoke_color = rgb("smoke");
-
-		for _, smoke in next, dx9.GetChildren(smokes_folder) do
-			if dx9.GetName(smoke) == "Smoke" then
-				local position = get_position(smoke);
-				if position then
-					local ground_y = position.y - 0.5;
-					local world_radius = 10.5;
-					local segments = 36;
-					local circle_points = {};
-
-					for i = 0, segments do
-						local angle = (2 * math.pi / segments) * i;
-						local world_x = position.x + world_radius * math.cos(angle);
-						local world_z = position.z + world_radius * math.sin(angle);
-						local screen_point = world_to_screen(world_x, ground_y, world_z);
-						if screen_point then
-							table.insert(circle_points, { screen_point.x, screen_point.y });
-						end
-					end
-
-					for i = 1, #circle_points do
-						local next_i = (i % #circle_points) + 1;
-						if circle_points[i] and circle_points[next_i] then
-							dx9.DrawLine(circle_points[i], circle_points[next_i], smoke_color);
-						end
-					end
-
-					local center_screen = world_to_screen(position.x, position.y, position.z);
-					if center_screen then
-						dx9.DrawString(
-							{ center_screen.x - (dx9.CalcTextWidth("SMOKE") / 2), center_screen.y - 20 },
-							smoke_color,
-							"SMOKE"
-						);
-					end
-				end
-			end
-		end
-	end;
+function CB.Run()
+	refresh_cache(false);
+	apply_fog();
+	run_rcs();
+	run_aimbot();
+	run_player_esp();
+	run_chinahat();
+	run_chams();
+	run_bomb_esp();
+	run_weapon_esp();
+	run_grenade_esp();
+	run_midair_esp();
+	run_smoke_radius();
+	run_molotov_radius();
+	if CB.window then CB.window:Render(); end
 end
 
-if _G.MolotovRadiusESP == nil then
-	_G.MolotovRadiusESP = function()
-		if not flag_on("esp_enabled") or not flag_on("mol_radius_enabled") then
-			return;
-		end
-
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
-
-		local workspace = dx9.FindFirstChild(datamodel, "Workspace");
-		if not workspace then return; end
-
-		local ray_ignore = dx9.FindFirstChild(workspace, "Ray_Ignore");
-		if not ray_ignore then return; end
-
-		local fires_folder = dx9.FindFirstChild(ray_ignore, "Fires");
-		if not fires_folder then return; end
-
-		local molotov_color = rgb("mol");
-
-		for _, fire in next, dx9.GetChildren(fires_folder) do
-			if dx9.GetName(fire) == "Fire" then
-				local position = get_position(fire);
-				if position then
-					local ground_y = position.y - 0.5;
-					local half_size = 12.0;
-					local corners = {
-						{ x = position.x - half_size, y = ground_y, z = position.z - half_size };
-						{ x = position.x + half_size, y = ground_y, z = position.z - half_size };
-						{ x = position.x + half_size, y = ground_y, z = position.z + half_size };
-						{ x = position.x - half_size, y = ground_y, z = position.z + half_size };
-					};
-
-					local screen_corners = {};
-					for i, corner in ipairs(corners) do
-						local screen_point = world_to_screen(corner.x, corner.y, corner.z);
-						if screen_point then
-							screen_corners[i] = { screen_point.x, screen_point.y };
-						end
-					end
-
-					if #screen_corners == 4 then
-						dx9.DrawLine(screen_corners[1], screen_corners[2], molotov_color);
-						dx9.DrawLine(screen_corners[2], screen_corners[3], molotov_color);
-						dx9.DrawLine(screen_corners[3], screen_corners[4], molotov_color);
-						dx9.DrawLine(screen_corners[4], screen_corners[1], molotov_color);
-					end
-
-					local center_screen = world_to_screen(position.x, position.y, position.z);
-					if center_screen then
-						dx9.DrawString(
-							{ center_screen.x - (dx9.CalcTextWidth("MOLOTOV") / 2), center_screen.y - 20 },
-							molotov_color,
-							"MOLOTOV"
-						);
-					end
-				end
-			end
-		end
-	end;
-end
-
-if _G.BombESP == nil then
-	_G.BombESP = function()
-		if not flag_on("esp_enabled") or not flag_on("bombs_enabled") then
-			return;
-		end
-
-		local datamodel = dx9.GetDatamodel();
-		if not datamodel then return; end
-
-		local workspace = dx9.FindFirstChild(datamodel, "Workspace");
-		if not workspace then return; end
-
-		local debris = dx9.FindFirstChild(workspace, "Debris");
-		local planted_c4 = dx9.FindFirstChild(workspace, "C4");
-		local dropped_c4 = debris and dx9.FindFirstChild(debris, "C4") or nil;
-		local bomb_color = rgb("bombs");
-
-		if valid_pointer(dropped_c4) then
-			local position = get_position(dropped_c4);
-			if position then
-				local screen = world_to_screen(position.x, position.y, position.z);
-				if screen then
-					dx9.DrawString(
-						{ screen.x - (dx9.CalcTextWidth("C4") / 2), screen.y },
-						bomb_color,
-						"C4"
-					);
-				end
-			end
-		end
-
-		if valid_pointer(planted_c4) then
-			local handle = dx9.FindFirstChild(planted_c4, "Handle");
-			if valid_pointer(handle) then
-				local position = get_position(handle);
-				if position then
-					local screen = world_to_screen(position.x, position.y, position.z);
-					if screen then
-						dx9.DrawString(
-							{ screen.x - (dx9.CalcTextWidth("Planted C4") / 2), screen.y },
-							bomb_color,
-							"Planted C4"
-						);
-					end
-				end
-			end
-		end
-	end;
-end
-
-if _G.ChamsESP then _G.ChamsESP(); end
-if _G.ChinahatESP then _G.ChinahatESP(); end
-if _G.BombESP then _G.BombESP(); end
-if _G.WeaponESP then _G.WeaponESP(); end
-if _G.GrenadeESP then _G.GrenadeESP(); end
-if _G.MidairGrenadeESP then _G.MidairGrenadeESP(); end
-if _G.SmokeRadiusESP then _G.SmokeRadiusESP(); end
-if _G.MolotovRadiusESP then _G.MolotovRadiusESP(); end
-
-if window then
-	window:Render();
-end
+CB.Run();
