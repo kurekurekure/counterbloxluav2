@@ -1,4 +1,4 @@
--- CounterBlox UI v3.4 | dx9ware | By kure | @anticurve
+-- CounterBlox UI v3.5 | dx9ware | By kure | @anticurve
 -- GitHub main script (counterbloxlua). Executed every frame by loader.lua.
 -- Bump BUILD + loader SCRIPT_VERSION together when you push updates.
 
@@ -115,6 +115,7 @@ if S == nil then
 		kb_hud_y = nil;
 		kb_hud_drag = nil;
 		keybind_labels = {};
+		keybind_names = {};
 		profiles = {};
 		default_flags = nil;
 		triggerbot_last = 0;
@@ -140,6 +141,7 @@ S.items = S.items or {
 	fires = {};
 };
 S.keybind_labels = S.keybind_labels or {};
+S.keybind_names = S.keybind_names or {};
 S.profiles = S.profiles or {};
 local cache = S.cache;
 
@@ -195,23 +197,107 @@ local KEY_DISPLAY = {
 	LBUTTON = "M1";
 	XBUTTON1 = "M4";
 	XBUTTON2 = "M5";
+	LCONTROL = "CTRL";
+	RCONTROL = "CTRL";
+	CONTROL = "CTRL";
+	LSHIFT = "SHIFT";
+	RSHIFT = "SHIFT";
+	LMENU = "ALT";
+	RMENU = "ALT";
 };
 
+local KEY_HELD_CODES = {
+	CTRL = { "[LCONTROL]", "[RCONTROL]", "[CONTROL]" };
+	LCONTROL = { "[LCONTROL]" };
+	RCONTROL = { "[RCONTROL]" };
+	CONTROL = { "[CONTROL]" };
+	SHIFT = { "[LSHIFT]", "[RSHIFT]", "[SHIFT]" };
+	LSHIFT = { "[LSHIFT]" };
+	RSHIFT = { "[RSHIFT]" };
+	ALT = { "[LMENU]", "[RMENU]", "[MENU]" };
+	LMENU = { "[LMENU]" };
+	RMENU = { "[RMENU]" };
+	MENU = { "[MENU]" };
+	MBUTTON = { "[MBUTTON]" };
+	RBUTTON = { "[RBUTTON]" };
+	LBUTTON = { "[LBUTTON]" };
+	XBUTTON1 = { "[XBUTTON1]" };
+	XBUTTON2 = { "[XBUTTON2]" };
+};
+
+local function normalize_bind_name(name)
+	if type(name) ~= "string" or name == "" then return ""; end
+	name = name:upper();
+	local inner = name:match("^%[(.+)%]$");
+	if inner then name = inner; end
+	return name;
+end
+
 local function format_bind_key(key)
-	if type(key) ~= "string" or key == "" then return "?"; end
-	key = key:upper();
+	key = normalize_bind_name(key);
+	if key == "" then return "?"; end
 	return KEY_DISPLAY[key] or key;
 end
 
-local function refresh_keybind_label(flag, fallback)
-	S.keybind_labels = S.keybind_labels or {};
+local function dx9_key_down(code)
+	if dx9.GetKey() == code then return true; end
+	local keys = dx9.GetKeys();
+	if type(keys) == "table" then
+		for _, k in ipairs(keys) do
+			if k == code then return true; end
+		end
+	end
+	return false;
+end
+
+local function sync_keybind_name(flag, fallback)
+	S.keybind_names = S.keybind_names or {};
 	local v = library.flags[flag];
 	if type(v) == "string" and v ~= "" then
-		S.keybind_labels[flag] = format_bind_key(v);
-	elseif not S.keybind_labels[flag] then
-		S.keybind_labels[flag] = format_bind_key(fallback);
+		S.keybind_names[flag] = normalize_bind_name(v);
 	end
+	for _, alt_key in ipairs({ flag .. "_bind", flag .. "bind", flag .. "_key" }) do
+		local alt = library.flags[alt_key];
+		if type(alt) == "string" and alt ~= "" then
+			S.keybind_names[flag] = normalize_bind_name(alt);
+		end
+	end
+	if _G._sr and type(_G._sr.binds) == "table" and type(_G._sr.binds[flag]) == "string" then
+		S.keybind_names[flag] = normalize_bind_name(_G._sr.binds[flag]);
+	end
+	if not S.keybind_names[flag] or S.keybind_names[flag] == "" then
+		S.keybind_names[flag] = normalize_bind_name(fallback);
+	end
+	S.keybind_labels[flag] = format_bind_key(S.keybind_names[flag]);
 	return S.keybind_labels[flag];
+end
+
+local function keybind_held(flag, fallback)
+	if flag_on(flag) then return true; end
+
+	local name = sync_keybind_name(flag, fallback);
+	local codes = KEY_HELD_CODES[name];
+	if codes then
+		for _, code in ipairs(codes) do
+			if dx9_key_down(code) then return true; end
+		end
+	end
+
+	if dx9_key_down("[" .. name .. "]") then return true; end
+
+	if name == "RBUTTON" or name == "M2" then return dx9.isRightClickHeld(); end
+	if name == "LBUTTON" or name == "M1" then return dx9.isLeftClickHeld(); end
+	if name == "MBUTTON" or name == "M3" then return dx9_key_down("[MBUTTON]"); end
+
+	return false;
+end
+
+local function on_keybind_set(flag, value)
+	S.keybind_names = S.keybind_names or {};
+	if type(value) == "string" and value ~= "" then
+		S.keybind_names[flag] = normalize_bind_name(value);
+		S.keybind_labels[flag] = format_bind_key(value);
+	end
 end
 
 local function snapshot_flags()
@@ -264,7 +350,8 @@ local function valid_pointer(ptr)
 	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
 end
 
-local BUILD = "3.4";
+local BUILD = "3.5";
+local BIND_SEP = " | ";
 
 local function menu_open()
 	if _G._sr then
@@ -475,7 +562,10 @@ s_aim:toggle({
 	name = "enabled"; flag = "aimbot_enabled"; default = config.combat.aimbot_enabled;
 	callback = function(v) notify("aimbot " .. (v and "on" or "off")); end;
 });
-s_aim:keybind({ name = "hold key"; flag = "aimbot_key"; default = "MBUTTON"; });
+s_aim:keybind({
+	name = "hold key"; flag = "aimbot_key"; default = "MBUTTON";
+	callback = function(v) on_keybind_set("aimbot_key", v); end;
+});
 s_aim:dropdown({ name = "mode"; flag = "aimbot_mode"; items = { "normal", "silent", "legit" }; default = config.combat.aimbot_mode or "normal"; });
 s_aim:dropdown({ name = "aim bone"; flag = "aim_bone"; items = { "Head", "Torso", "HumanoidRootPart" }; default = config.combat.aim_bone or "Head"; });
 s_aim:toggle({ name = "only rmb"; flag = "only_rmb"; default = config.combat.only_rmb ~= false; tip = "Only aim while scoped (RMB)."; });
@@ -495,7 +585,10 @@ s_trigger:toggle({
 	name = "enabled"; flag = "triggerbot_enabled"; default = config.combat.triggerbot_enabled;
 	callback = function(v) notify("triggerbot " .. (v and "on" or "off")); end;
 });
-s_trigger:keybind({ name = "hold key"; flag = "triggerbot_key"; default = config.combat.triggerbot_key or "CTRL"; });
+s_trigger:keybind({
+	name = "hold key"; flag = "triggerbot_key"; default = config.combat.triggerbot_key or "CTRL";
+	callback = function(v) on_keybind_set("triggerbot_key", v); end;
+});
 s_trigger:slider({ name = "delay"; flag = "triggerbot_delay"; min = 0; max = 300; default = config.combat.triggerbot_delay or 50; interval = 5; suffix = " ms"; tip = "Min time between shots."; });
 s_trigger:slider({ name = "radius"; flag = "triggerbot_radius"; min = 4; max = 40; default = config.combat.triggerbot_radius or 14; interval = 1; suffix = " px"; tip = "Crosshair proximity to enemy head."; });
 
@@ -629,8 +722,8 @@ s_reset:button({
 	end;
 });
 
-refresh_keybind_label("aimbot_key", "MBUTTON");
-refresh_keybind_label("triggerbot_key", config.combat.triggerbot_key or "CTRL");
+sync_keybind_name("aimbot_key", "MBUTTON");
+sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "CTRL");
 
 if not S.greeted then
 	S.greeted = true;
@@ -749,7 +842,7 @@ end
 local function run_aimbot()
 	if menu_open() then return; end
 	if not flag_on("aimbot_enabled") then return; end
-	if not flag_on("aimbot_key") then return; end
+	if not keybind_held("aimbot_key", "MBUTTON") then return; end
 	if flag_on("only_rmb") and not dx9.isRightClickHeld() then return; end
 
 	sync_aimbot_settings();
@@ -807,7 +900,7 @@ end
 local function run_triggerbot()
 	if menu_open() then return; end
 	if not flag_on("triggerbot_enabled") then return; end
-	if not flag_on("triggerbot_key") then return; end
+	if not keybind_held("triggerbot_key", config.combat.triggerbot_key or "CTRL") then return; end
 	if dx9.isLeftClickHeld() then return; end
 
 	local delay = flag_num("triggerbot_delay", 50) / 1000;
@@ -875,16 +968,19 @@ end
 local function draw_keybind_hud()
 	if not flag_on("keybind_hud") then return; end
 
+	sync_keybind_name("aimbot_key", "MBUTTON");
+	sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "CTRL");
+
 	local menu_key = format_bind_key(parse_toggle_key(config.settings.menu_toggle_keybind));
-	local aim_key = refresh_keybind_label("aimbot_key", "MBUTTON");
-	local trig_key = refresh_keybind_label("triggerbot_key", config.combat.triggerbot_key or "CTRL");
+	local aim_key = S.keybind_labels.aimbot_key or "?";
+	local trig_key = S.keybind_labels.triggerbot_key or "?";
 
 	local rows = {};
 	if flag_on("aimbot_enabled") then
-		rows[#rows + 1] = { "AIMBOT", flag_on("aimbot_key"), aim_key };
+		rows[#rows + 1] = { "AIMBOT", keybind_held("aimbot_key", "MBUTTON"), aim_key };
 	end
 	if flag_on("triggerbot_enabled") then
-		rows[#rows + 1] = { "TRIGGER", flag_on("triggerbot_key"), trig_key };
+		rows[#rows + 1] = { "TRIGGER", keybind_held("triggerbot_key", config.combat.triggerbot_key or "CTRL"), trig_key };
 	end
 	if flag_on("rcs_enabled") then
 		rows[#rows + 1] = { "RCS", dx9.isLeftClickHeld(), "LMB" };
@@ -906,7 +1002,7 @@ local function draw_keybind_hud()
 	local w = 150;
 	for _, row in ipairs(rows) do
 		local text = row[1];
-		if row[3] then text = text .. " — " .. row[3]; end
+		if row[3] then text = text .. BIND_SEP .. row[3]; end
 		w = math.max(w, dx9.CalcTextWidth(text) + 28);
 	end
 	local h = header_h + pad + (#rows * row_h);
@@ -935,7 +1031,7 @@ local function draw_keybind_hud()
 
 	for i, row in ipairs(rows) do
 		local label, active, bind = row[1], row[2], row[3];
-		local line = bind and (label .. " — " .. bind) or label;
+		local line = bind and (label .. BIND_SEP .. bind) or label;
 		local ly = y + header_h + 4 + (i - 1) * row_h;
 		local dot = active and { 80, 220, 120 } or { 120, 120, 120 };
 		dx9.DrawCircle({ x + 10, ly + 5 }, dot, 2);
