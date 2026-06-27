@@ -1,13 +1,12 @@
 -- CounterBlox ESP | dx9ware | By kure | @anticurve
--- GitHub main script — load once via loader.lua, then Run() each frame.
+-- GitHub main script (counterbloxlua) — load via loader.lua, or paste loader only in LUA tab.
 
-if _G.CounterBlox and _G.CounterBlox.Run then
+if _G.CounterBlox and _G.CounterBlox.ready and _G.CounterBlox.Run and _G.CounterBlox.window then
 	_G.CounterBlox.Run();
 	return;
 end
 
 local CB = {};
-_G.CounterBlox = CB;
 
 config = _G.counterblox_config or {
 	urls = {
@@ -77,14 +76,39 @@ local function parse_toggle_key(keybind)
 end
 
 local function notify(msg)
-	if send_notif then send_notif(msg);
-	else dx9.ShowConsole(true); print(msg); end
+	if type(send_notif) == "function" then
+		send_notif(msg);
+	else
+		dx9.ShowConsole(true);
+	end
 end
 
-if library == nil then
+local function load_ui_library()
+	if type(library) == "table" and type(library.Window) == "function" then
+		return true;
+	end
 	local ui_url = config.urls.UI or config.urls.DXLibUI
 		or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
-	loadstring(dx9.Get(ui_url))();
+	local source = dx9.Get(ui_url);
+	if type(source) ~= "string" or source == "" then
+		dx9.ShowConsole(true);
+		return false;
+	end
+	local chunk, err = loadstring(source);
+	if not chunk then
+		dx9.ShowConsole(true);
+		return false;
+	end
+	chunk();
+	if type(library) ~= "table" or type(library.Window) ~= "function" then
+		dx9.ShowConsole(true);
+		return false;
+	end
+	return true;
+end
+
+if not load_ui_library() then
+	return;
 end
 
 local function flag_on(name)
@@ -135,8 +159,6 @@ local cache = {
 	debris = nil;
 	ray_ignore = nil;
 	lighting = nil;
-	fog_values = nil;
-	original_fog = nil;
 	rcs_y = 0;
 };
 
@@ -499,33 +521,8 @@ local function draw_cham_box(position, cframe, size, color)
 	end
 end
 
-local function find_fog_values()
-	if cache.fog_values then return cache.fog_values; end
-	if not cache.lighting then return nil; end
-	local out = {};
-	for _, child in next, dx9.GetChildren(cache.lighting) do
-		local n = dx9.GetName(child);
-		if n == "FogEnd" or n == "FogStart" then out[n] = child; end
-	end
-	cache.fog_values = out;
-	return out;
-end
-
 local function apply_fog()
-	if not flag_on("no_fog") then return; end
-	local fog = find_fog_values();
-	local target = flag_num("fog_end", 100000);
-	if fog and fog.FogEnd and dx9.SetNumValue then
-		if cache.original_fog == nil then
-			cache.original_fog = dx9.GetNumValue(fog.FogEnd);
-		end
-		dx9.SetNumValue(fog.FogEnd, target);
-	elseif fog and fog.FogEnd and dx9.SetIntValue then
-		if cache.original_fog == nil then
-			cache.original_fog = dx9.GetIntValue(fog.FogEnd);
-		end
-		dx9.SetIntValue(fog.FogEnd, target);
-	end
+	-- No fog write in dx9 docs; toggle kept for UI parity with example.
 end
 
 local function sync_aimbot_settings()
@@ -549,7 +546,6 @@ local function run_aimbot()
 
 	sync_aimbot_settings();
 
-	local mouse = dx9.GetMouse();
 	local cx, cy = dx9.size().width / 2, dx9.size().height / 2;
 	local fov_limit = flag_num("aimbot_fov", 90) * 4;
 	local best, best_dist;
@@ -846,7 +842,11 @@ function CB.Run()
 	run_midair_esp();
 	run_smoke_radius();
 	run_molotov_radius();
-	if CB.window then CB.window:Render(); end
+	if CB.window and type(CB.window.Render) == "function" then
+		CB.window:Render();
+	end
 end
 
+CB.ready = true;
+_G.CounterBlox = CB;
 CB.Run();
