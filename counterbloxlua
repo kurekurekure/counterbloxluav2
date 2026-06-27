@@ -1,4 +1,4 @@
--- CounterBlox UI v3.2 | dx9ware | By kure | @anticurve
+-- CounterBlox UI v3.3 | dx9ware | By kure | @anticurve
 -- GitHub main script (counterbloxlua). Executed every frame by loader.lua.
 -- Bump BUILD + loader SCRIPT_VERSION together when you push updates.
 
@@ -23,6 +23,9 @@ config = _G.counterblox_config or {
 		rcs_enabled = false;
 		rcs_h = 80;
 		rcs_v = 80;
+		triggerbot_enabled = false;
+		triggerbot_delay = 50;
+		triggerbot_radius = 14;
 	};
 	world = {
 		no_fog = false;
@@ -34,6 +37,7 @@ config = _G.counterblox_config or {
 		player_boxes = true;
 		player_hp = true;
 		player_names = true;
+		player_distance = true;
 		player_max_dist = 500;
 		player_esp_color = { 255, 255, 255 };
 		chinahat_enabled = false;
@@ -62,6 +66,12 @@ config = _G.counterblox_config or {
 	hud = {
 		radar_enabled = true;
 		snaplines = false;
+		crosshair_enabled = false;
+		crosshair_style = "gap cross";
+		crosshair_size = 8;
+		crosshair_gap = 4;
+		crosshair_color = { 255, 255, 255 };
+		keybind_hud = true;
 	};
 };
 
@@ -97,6 +107,10 @@ if S == nil then
 		radar_x = nil;
 		radar_y = nil;
 		radar_drag = nil;
+		bomb_x = nil;
+		bomb_y = nil;
+		bomb_drag = nil;
+		triggerbot_last = 0;
 		cache = {
 			frame = 0;
 			players = {};
@@ -200,7 +214,7 @@ local function valid_pointer(ptr)
 	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
 end
 
-local BUILD = "3.2";
+local BUILD = "3.3";
 
 local function menu_open()
 	if _G._sr then
@@ -221,6 +235,30 @@ local function shift_held()
 		end
 	end
 	return false;
+end
+
+local function can_hud_drag()
+	return menu_open() or shift_held();
+end
+
+local function handle_panel_drag(pos_x, pos_y, drag_key, rx, ry, w, header_h)
+	if can_hud_drag() then
+		local mouse = dx9.GetMouse();
+		local mx, my = mouse.x, mouse.y;
+		if dx9.isLeftClickHeld() then
+			if S[drag_key] then
+				S[pos_x] = mx - S[drag_key].ox;
+				S[pos_y] = my - S[drag_key].oy;
+			elseif mx >= rx and mx <= rx + w and my >= ry and my <= ry + header_h then
+				S[drag_key] = { ox = mx - rx; oy = my - ry; };
+			end
+		else
+			S[drag_key] = nil;
+		end
+	else
+		S[drag_key] = nil;
+	end
+	return math.floor(S[pos_x]), math.floor(S[pos_y]);
 end
 
 local function screen_center()
@@ -378,9 +416,10 @@ local tab_items = window:tab({ name = "items" });
 local tab_config = window:tab({ name = "config" });
 
 local col_combat = tab_aimbot:column();
-local combat_ms = col_combat:multisection({ name = "combat", sections = { "aimbot", "rcs" } });
+local combat_ms = col_combat:multisection({ name = "combat", sections = { "aimbot", "rcs", "trigger" } });
 local s_aim = combat_ms:get_tab("aimbot");
 local s_rcs = combat_ms:get_tab("rcs");
+local s_trigger = combat_ms:get_tab("trigger");
 
 s_aim:toggle({
 	name = "enabled"; flag = "aimbot_enabled"; default = config.combat.aimbot_enabled;
@@ -402,6 +441,13 @@ s_rcs:toggle({
 s_rcs:slider({ name = "horizontal"; flag = "rcs_h"; min = 0; max = 100; default = config.combat.rcs_h or 80; interval = 1; suffix = "%"; });
 s_rcs:slider({ name = "vertical"; flag = "rcs_v"; min = 0; max = 100; default = config.combat.rcs_v or 80; interval = 1; suffix = "%"; });
 
+s_trigger:toggle({
+	name = "enabled"; flag = "triggerbot_enabled"; default = config.combat.triggerbot_enabled;
+	callback = function(v) notify("triggerbot " .. (v and "on" or "off")); end;
+});
+s_trigger:slider({ name = "delay"; flag = "triggerbot_delay"; min = 0; max = 300; default = config.combat.triggerbot_delay or 50; interval = 5; suffix = " ms"; tip = "Min time between shots."; });
+s_trigger:slider({ name = "radius"; flag = "triggerbot_radius"; min = 4; max = 40; default = config.combat.triggerbot_radius or 14; interval = 1; suffix = " px"; tip = "Crosshair proximity to enemy head."; });
+
 local col_player_vis = tab_visuals:column();
 local col_world = tab_visuals:column();
 
@@ -413,6 +459,7 @@ s_player_esp:toggle({
 s_player_esp:toggle({ name = "boxes"; flag = "player_boxes"; default = config.players.player_boxes ~= false; });
 s_player_esp:toggle({ name = "health bar"; flag = "player_hp"; default = config.players.player_hp ~= false; });
 s_player_esp:toggle({ name = "names"; flag = "player_names"; default = config.players.player_names ~= false; });
+s_player_esp:toggle({ name = "distance"; flag = "player_distance"; default = config.players.player_distance ~= false; tip = "Show distance on name tags."; });
 s_player_esp:slider({ name = "max dist"; flag = "player_max_dist"; min = 10; max = 2000; default = config.players.player_max_dist or 500; interval = 10; suffix = " st"; });
 add_rgb(s_player_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
 
@@ -428,6 +475,12 @@ s_extra:toggle({ name = "team check"; flag = "teamcheck_enabled"; default = conf
 local s_hud = col_world:section({ name = "hud" });
 s_hud:toggle({ name = "2d radar"; flag = "radar_enabled"; default = config.hud.radar_enabled ~= false; tip = "Drag header with LMB (menu open or hold Shift)."; });
 s_hud:toggle({ name = "snaplines"; flag = "snaplines"; default = config.hud.snaplines == true; tip = "Lines from crosshair to enemies."; });
+s_hud:toggle({ name = "custom crosshair"; flag = "crosshair_enabled"; default = config.hud.crosshair_enabled == true; });
+s_hud:dropdown({ name = "crosshair style"; flag = "crosshair_style"; items = { "gap cross", "cross", "dot", "circle" }; default = config.hud.crosshair_style or "gap cross"; });
+s_hud:slider({ name = "crosshair size"; flag = "crosshair_size"; min = 2; max = 24; default = config.hud.crosshair_size or 8; interval = 1; suffix = " px"; });
+s_hud:slider({ name = "crosshair gap"; flag = "crosshair_gap"; min = 0; max = 12; default = config.hud.crosshair_gap or 4; interval = 1; suffix = " px"; tip = "Center gap for gap cross style."; });
+add_rgb(s_hud, "crosshair", "cross", config.hud.crosshair_color or { 255, 255, 255 });
+s_hud:toggle({ name = "keybind hud"; flag = "keybind_hud"; default = config.hud.keybind_hud ~= false; tip = "Shows active features (bottom-left)."; });
 
 local s_world = col_world:section({ name = "world" });
 s_world:toggle({ name = "no fog"; flag = "no_fog"; default = config.world.no_fog; tip = "Reserved (no dx9 fog-write API)."; });
@@ -443,7 +496,7 @@ local col_items_right = tab_items:column();
 
 local s_bombs = col_items_left:section({ name = "bombs" });
 s_bombs:toggle({ name = "bomb esp"; flag = "bombs_enabled"; default = config.items.bombs_enabled; });
-s_bombs:toggle({ name = "bomb timer"; flag = "bomb_timer"; default = config.items.bomb_timer ~= false; tip = "40s countdown when bomb is planted."; });
+s_bombs:toggle({ name = "bomb timer"; flag = "bomb_timer"; default = config.items.bomb_timer ~= false; tip = "40s countdown. Drag bar while menu open or hold Shift."; });
 add_rgb(s_bombs, "bombs", "bomb", config.items.bombs_color);
 
 local s_grenades = col_items_left:section({ name = "grenades" });
@@ -649,6 +702,103 @@ local function run_rcs()
 	dx9.FirstPersonAim({ math.floor(cx + S.rcs_x), math.floor(cy + S.rcs_y) }, 1, 100);
 end
 
+local function run_triggerbot()
+	if menu_open() then return; end
+	if not flag_on("triggerbot_enabled") then return; end
+	if dx9.isLeftClickHeld() then return; end
+
+	local delay = flag_num("triggerbot_delay", 50) / 1000;
+	if S.triggerbot_last and (os.clock() - S.triggerbot_last) < delay then return; end
+
+	local cx, cy = screen_center();
+	local radius = flag_num("triggerbot_radius", 14);
+	local hit = false;
+
+	for _, entry in ipairs(get_player_entries()) do
+		local screen = get_aim_screen(entry);
+		if not screen and entry.head_pos then
+			screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y, entry.head_pos.z);
+		end
+		if screen then
+			local d = math.sqrt((screen.x - cx) ^ 2 + (screen.y - cy) ^ 2);
+			if d <= radius then
+				hit = true;
+				break;
+			end
+		end
+	end
+
+	if not hit then
+		local locked = dx9.GetLocked();
+		if valid_pointer(locked) then hit = true; end
+	end
+
+	if hit then
+		dx9.Mouse1Click();
+		S.triggerbot_last = os.clock();
+	end
+end
+
+local function draw_crosshair()
+	if not flag_on("crosshair_enabled") or menu_open() then return; end
+
+	local cx, cy = screen_center();
+	local size = flag_num("crosshair_size", 8);
+	local gap = flag_num("crosshair_gap", 4);
+	local col = rgb("crosshair");
+	local style = flag_str("crosshair_style", "gap cross");
+
+	if style == "dot" then
+		dx9.DrawCircle({ cx, cy }, col, math.max(2, math.floor(size / 3)));
+	elseif style == "circle" then
+		local prev;
+		for seg = 0, 24 do
+			local a = (2 * math.pi / 24) * seg;
+			local pt = { cx + size * math.cos(a), cy + size * math.sin(a) };
+			if prev then dx9.DrawLine(prev, pt, col); end
+			prev = pt;
+		end
+	elseif style == "cross" then
+		dx9.DrawLine({ cx - size, cy }, { cx + size, cy }, col);
+		dx9.DrawLine({ cx, cy - size }, { cx, cy + size }, col);
+	else
+		dx9.DrawLine({ cx - size, cy }, { cx - gap, cy }, col);
+		dx9.DrawLine({ cx + gap, cy }, { cx + size, cy }, col);
+		dx9.DrawLine({ cx, cy - size }, { cx, cy - gap }, col);
+		dx9.DrawLine({ cx, cy + gap }, { cx, cy + size }, col);
+	end
+end
+
+local function draw_keybind_hud()
+	if not flag_on("keybind_hud") then return; end
+
+	local rows = {};
+	if flag_on("aimbot_enabled") then rows[#rows + 1] = { "AIMBOT", flag_on("aimbot_key") }; end
+	if flag_on("rcs_enabled") then rows[#rows + 1] = { "RCS", dx9.isLeftClickHeld() }; end
+	if flag_on("triggerbot_enabled") then rows[#rows + 1] = { "TRIGGER", true }; end
+	if flag_on("esp_enabled") and flag_on("player_esp_enabled") then rows[#rows + 1] = { "ESP", true }; end
+	if flag_on("radar_enabled") then rows[#rows + 1] = { "RADAR", true }; end
+	if flag_on("bomb_timer") then rows[#rows + 1] = { "BOMB TIMER", true }; end
+	if #rows == 0 then return; end
+
+	local x = 12;
+	local y = dx9.size().height - 28 - (#rows * 16);
+	local w = 118;
+	local h = 8 + #rows * 16;
+
+	dx9.DrawFilledBox({ x, y }, { x + w, y + h }, { 12, 12, 14 });
+	dx9.DrawBox({ x, y }, { x + w, y + h }, { 38, 38, 44 });
+	dx9.DrawFilledBox({ x, y }, { x + w, y + 2 }, { 121, 96, 180 });
+
+	for i, row in ipairs(rows) do
+		local label, active = row[1], row[2];
+		local ly = y + 6 + (i - 1) * 16;
+		local dot = active and { 80, 220, 120 } or { 120, 120, 120 };
+		dx9.DrawCircle({ x + 10, ly + 5 }, dot, 2);
+		dx9.DrawString({ x + 18, ly + 1 }, { 210, 210, 215 }, label);
+	end
+end
+
 local function draw_fov_circle()
 	if not flag_on("fov_circle") then return; end
 	if menu_open() then return; end
@@ -700,41 +850,17 @@ local function draw_radar()
 
 	local rx = math.floor(S.radar_x);
 	local ry = math.floor(S.radar_y);
-	local map_y = ry + header;
-	local map_h = size - header;
-	local cx = rx + size / 2;
-	local cy = map_y + map_h / 2;
-	local scale = map_h / 130;
-
-	-- Drag header: menu open OR hold Shift (seraph visibility flag varies by build).
-	local can_drag = menu_open() or shift_held();
-	if can_drag then
-		local mouse = dx9.GetMouse();
-		local mx, my = mouse.x, mouse.y;
-		if dx9.isLeftClickHeld() then
-			if S.radar_drag then
-				S.radar_x = mx - S.radar_drag.ox;
-				S.radar_y = my - S.radar_drag.oy;
-				rx = math.floor(S.radar_x);
-				ry = math.floor(S.radar_y);
-				map_y = ry + header;
-				cy = map_y + map_h / 2;
-			elseif mx >= rx and mx <= rx + size and my >= ry and my <= ry + header then
-				S.radar_drag = { ox = mx - rx; oy = my - ry; };
-			end
-		else
-			S.radar_drag = nil;
-		end
-	else
-		S.radar_drag = nil;
-	end
+	rx, ry = handle_panel_drag("radar_x", "radar_y", "radar_drag", rx, ry, size, header);
 
 	S.radar_x = math.max(0, math.min(sw - size, S.radar_x));
 	S.radar_y = math.max(0, math.min(sh - size, S.radar_y));
 	rx = math.floor(S.radar_x);
 	ry = math.floor(S.radar_y);
-	map_y = ry + header;
-	cy = map_y + map_h / 2;
+	local map_y = ry + header;
+	local map_h = size - header;
+	local cx = rx + size / 2;
+	local cy = map_y + map_h / 2;
+	local scale = map_h / 130;
 
 	dx9.DrawFilledBox({ rx, ry }, { rx + size, ry + size }, bg);
 	dx9.DrawFilledBox({ rx, ry }, { rx + size, ry + header }, { 18, 18, 22 });
@@ -805,11 +931,24 @@ local function draw_bomb_timer()
 	end
 
 	local sw = dx9.size().width;
+	local sh = dx9.size().height;
 	local tw = dx9.CalcTextWidth(label);
 	local ww = tw + 24;
 	local wh = 22;
-	local wx = math.floor(sw / 2 - ww / 2);
-	local wy = 30;
+
+	if S.bomb_x == nil then
+		S.bomb_x = sw / 2 - ww / 2;
+		S.bomb_y = 30;
+	end
+
+	local wx = math.floor(S.bomb_x);
+	local wy = math.floor(S.bomb_y);
+	wx, wy = handle_panel_drag("bomb_x", "bomb_y", "bomb_drag", wx, wy, ww, wh);
+
+	S.bomb_x = math.max(0, math.min(sw - ww, S.bomb_x));
+	S.bomb_y = math.max(0, math.min(sh - wh, S.bomb_y));
+	wx = math.floor(S.bomb_x);
+	wy = math.floor(S.bomb_y);
 
 	dx9.DrawFilledBox({ wx, wy }, { wx + ww, wy + wh }, { 15, 15, 15 });
 	dx9.DrawBox({ wx, wy }, { wx + ww, wy + wh }, { 45, 45, 45 });
@@ -849,7 +988,11 @@ local function run_player_esp()
 			end
 
 			if draw_names and entry.name then
-				dx9.DrawString({ top.x - dx9.CalcTextWidth(entry.name) / 2, y1 - 14 }, color, entry.name);
+				local label = entry.name;
+				if flag_on("player_distance") and entry.distance then
+					label = label .. " [" .. math.floor(entry.distance) .. "st]";
+				end
+				dx9.DrawString({ top.x - dx9.CalcTextWidth(label) / 2, y1 - 14 }, color, label);
 			end
 		end
 	end
@@ -1091,6 +1234,7 @@ pcall(function()
 	scan_radius_items();
 	run_rcs();
 	run_aimbot();
+	run_triggerbot();
 	run_player_esp();
 	run_chinahat();
 	run_chams();
@@ -1101,9 +1245,11 @@ pcall(function()
 	draw_smoke_radius();
 	draw_molotov_radius();
 	draw_fov_circle();
+	draw_crosshair();
 	draw_snaplines();
 	draw_radar();
 	draw_bomb_timer();
+	draw_keybind_hud();
 end);
 
 window:Render();
