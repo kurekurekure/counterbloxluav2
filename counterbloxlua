@@ -1,8 +1,9 @@
 -- CounterBlox UI | dx9ware | By kure | @anticurve
 
-local BUILD = "4.0";
+local BUILD = "4.1";
 local BIND_SEP = " | ";
 local TRIG_KEY = "XBUTTON1";
+local M_PER_STUD = 0.28;
 
 local DEFAULTS = {
 	urls = {
@@ -13,13 +14,13 @@ local DEFAULTS = {
 	combat = { triggerbot_enabled = false; triggerbot_delay = 40; triggerbot_radius = 14; triggerbot_key = TRIG_KEY; };
 	players = {
 		teamcheck_enabled = true; player_esp_enabled = true; player_boxes = true; player_hp = true;
-		player_names = true; player_distance = true; player_max_dist = 500; player_esp_color = { 255, 255, 255 };
+		player_names = true; player_distance = true; player_max_dist = 140; player_esp_color = { 255, 255, 255 };
 		chinahat_enabled = false; chinahat_rainbow = true; chinahat_color = { 255, 0, 0 };
 		chams_enabled = false; chams_enemy_color = { 255, 0, 0 }; chams_team_color = { 0, 255, 0 };
 	};
 	items = {
 		bombs_enabled = true; bomb_timer = true; bombs_color = { 255, 255, 0 };
-		weapons_enabled = true; weapons_color = { 0, 255, 255 }; weapons_show_ammo = true;
+		weapons_enabled = true; weapons_color = { 0, 255, 255 }; weapons_show_ammo = true; weapons_max_dist = 50;
 		grenades_enabled = true; grenades_color = { 255, 0, 255 };
 		midair_grenades_enabled = true; midair_grenades_color = { 255, 128, 0 };
 		smoke_radius_enabled = true; smoke_radius_color = { 0, 255, 0 };
@@ -47,7 +48,8 @@ config.urls = config.urls or {};
 local S = _G.__cb_state;
 if not S then
 	S = {
-		greeted = false; rainbow_t = 0; rainbow_i = 1; rainbow_fc = 0; bomb_t0 = nil; trig_last = 0;
+		greeted = false; rainbow_t = 0; rainbow_i = 1; rainbow_fc = 0;
+		bomb_t0 = nil; bomb_id = nil; bomb_miss = 0; trig_last = 0; ui_build = nil;
 		items = { weapons = {}; grenades = {}; midair = {}; smokes = {}; fires = {}; };
 		radar_x = nil; radar_y = nil; radar_drag = nil;
 		bomb_x = nil; bomb_y = nil; bomb_drag = nil;
@@ -66,7 +68,13 @@ S.keybind_names = S.keybind_names or {};
 S.keybind_labels = S.keybind_labels or {};
 S.profiles = S.profiles or {};
 S.trig_last = S.trig_last or S.triggerbot_last or 0;
+S.bomb_miss = S.bomb_miss or 0;
 local cache = S.cache;
+
+if S.ui_build ~= BUILD then
+	_G._sr = nil;
+	S.ui_build = BUILD;
+end
 
 do
 	local src = dx9.Get(config.urls.UI or DEFAULTS.urls.UI);
@@ -237,6 +245,9 @@ local function dist3(a, b)
 	return math.sqrt(dx * dx + dy * dy + dz * dz);
 end
 
+local function studs_to_m(studs) return studs * M_PER_STUD; end
+local function m_to_studs(m) return m / M_PER_STUD; end
+
 local function planted_bomb()
 	if not cache.workspace then return; end
 	local c4 = dx9.FindFirstChild(cache.workspace, "C4");
@@ -275,7 +286,7 @@ end
 
 local function get_players()
 	if cache.player_entries_tick == cache.frame then return cache.player_entries or {}; end
-	local out, maxd = {}, num("player_max_dist", config.players.player_max_dist or 500);
+	local out, max_studs = {}, m_to_studs(num("player_max_dist", config.players.player_max_dist or 140));
 	for _, p in next, cache.players do
 		if p ~= cache.local_player then
 			local char = dx9.GetCharacter(p);
@@ -285,13 +296,16 @@ local function get_players()
 					local head = dx9.FindFirstChild(char, "Head");
 					local root = dx9.FindFirstChild(char, "HumanoidRootPart") or dx9.FindFirstChild(char, "Torso") or dx9.FindFirstChild(char, "UpperTorso");
 					local hp, rp = head and pos(head), root and pos(root);
-					if hp and rp and (not cache.local_pos or dist3(rp, cache.local_pos) <= maxd) then
-						out[#out + 1] = {
-							character = char, humanoid = dx9.FindFirstChild(char, "Humanoid"),
-							name = dx9.GetName(p), mate = mate, head = hp, root = rp,
-							dist = cache.local_pos and dist3(rp, cache.local_pos) or 0,
-							head_scr = w2s(hp.x, hp.y, hp.z),
-						};
+					if hp and rp then
+						local dst = cache.local_pos and dist3(rp, cache.local_pos) or 0;
+						if not cache.local_pos or dst <= max_studs then
+							out[#out + 1] = {
+								character = char, humanoid = dx9.FindFirstChild(char, "Humanoid"),
+								name = dx9.GetName(p), mate = mate, head = hp, root = rp,
+								dist_m = studs_to_m(dst),
+								head_scr = w2s(hp.x, hp.y, hp.z),
+							};
+						end
 					end
 				end
 			end
@@ -330,7 +344,7 @@ s_esp:toggle({ name = "boxes", flag = "player_boxes", default = config.players.p
 s_esp:toggle({ name = "health bar", flag = "player_hp", default = config.players.player_hp ~= false });
 s_esp:toggle({ name = "names", flag = "player_names", default = config.players.player_names ~= false });
 s_esp:toggle({ name = "distance", flag = "player_distance", default = config.players.player_distance ~= false });
-s_esp:slider({ name = "max dist", flag = "player_max_dist", min = 10, max = 2000, default = config.players.player_max_dist or 500, interval = 10, suffix = " st" });
+s_esp:slider({ name = "max dist", flag = "player_max_dist", min = 5, max = 500, default = config.players.player_max_dist or 140, interval = 5, suffix = " m" });
 add_rgb(s_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
 
 local s_extra = col_vis:section({ name = "extra visuals" });
@@ -369,6 +383,7 @@ add_rgb(s_rad, "mol", "mol", config.items.molotov_radius_color);
 local s_wep = cir:section({ name = "weapons" });
 s_wep:toggle({ name = "weapon esp", flag = "weapons_enabled", default = config.items.weapons_enabled });
 s_wep:toggle({ name = "show ammo", flag = "weapons_show_ammo", default = config.items.weapons_show_ammo });
+s_wep:slider({ name = "max dist", flag = "weapons_max_dist", min = 5, max = 200, default = config.items.weapons_max_dist or 50, interval = 5, suffix = " m" });
 add_rgb(s_wep, "weapons", "weapon", config.items.weapons_color);
 local s_mid = cir:section({ name = "midair" });
 s_mid:toggle({ name = "midair nades", flag = "midair_grenades_enabled", default = config.items.midair_grenades_enabled });
@@ -388,12 +403,28 @@ cc2:section({ name = "reset" }):button({ name = "reset to defaults", callback = 
 end });
 
 sync_bind("triggerbot_key", config.combat.triggerbot_key or TRIG_KEY);
-if not S.greeted then S.greeted = true; S.default_flags = snap_flags(); notify("CounterBlox UI v" .. BUILD); end
+if not S.greeted then
+	S.greeted = true;
+	S.default_flags = snap_flags();
+	notify("CounterBlox UI v" .. BUILD);
+elseif not S.migrated_41 then
+	S.migrated_41 = true;
+	local pd = library.flags.player_max_dist;
+	if type(pd) == "number" and pd > 300 then
+		library.flags.player_max_dist = math.floor(pd * M_PER_STUD);
+	end
+	for _, f in ipairs({ "aimbot_enabled", "aimbot_key", "aimbot_mode", "aim_bone", "only_rmb", "smoothing", "aimbot_sens", "aimbot_fov", "fov_circle", "rcs_enabled", "rcs_h", "rcs_v" }) do
+		library.flags[f] = nil;
+	end
+end
 
 local RAINBOW = { {255,0,0},{255,127,0},{255,255,0},{0,255,0},{0,0,255},{75,0,130},{148,0,211} };
 local CHAM_PARTS = { "Head", "UpperTorso", "LowerTorso", "Torso" };
 local CHAM_SZ = { Head = {1.1,1.1,1.1}, Torso = {2,2,1}, UpperTorso = {2,2,1}, LowerTorso = {2,1.5,1} };
-local WEAPONS = { AK47=1,M4A1=1,M4A4=1,AWP=1,DesertEagle=1,Scout=1,SG=1,M249=1,Glock=1,USP=1,P250=1,FiveSeven=1,Tec9=1,MP7=1,P90=1,Deagle=1 };
+local WEAPONS = {
+	AK47 = 1, M4A1 = 1, M4A4 = 1, M4A1S = 1, ["M4A1-S"] = 1, AWP = 1, DesertEagle = 1, Deagle = 1,
+	Scout = 1, SG = 1, M249 = 1, Glock = 1, USP = 1, P250 = 1, FiveSeven = 1, Tec9 = 1, MP7 = 1, P90 = 1,
+};
 local NADES = { ["Smoke Grenade"]=1, ["HE Grenade"]=1, ["Flashbang"]=1, ["Molotov"]=1 };
 
 local function box2d(x1, y1, x2, y2, c)
@@ -513,11 +544,29 @@ local function draw_radar()
 end
 
 local function draw_bomb_timer()
-	if not on("bomb_timer") then S.bomb_t0 = nil; return; end
-	if not planted_bomb() then S.bomb_t0 = nil; return; end
-	S.bomb_t0 = S.bomb_t0 or os.clock();
-	local rem = 40 - (os.clock() - S.bomb_t0);
-	if rem <= 0 then return; end
+	if not on("bomb_timer") then
+		S.bomb_t0 = nil; S.bomb_id = nil; S.bomb_miss = 0;
+		return;
+	end
+
+	local bomb = planted_bomb();
+	if bomb then
+		S.bomb_miss = 0;
+		if S.bomb_id ~= bomb then
+			S.bomb_id = bomb;
+			S.bomb_t0 = os.clock();
+		end
+	else
+		S.bomb_miss = S.bomb_miss + 1;
+		if S.bomb_miss > 24 then
+			S.bomb_t0 = nil; S.bomb_id = nil; S.bomb_miss = 0;
+		end
+	end
+
+	if not S.bomb_t0 then return; end
+
+	local rem = math.max(0, 40 - (os.clock() - S.bomb_t0));
+	if rem <= 0 then S.bomb_t0 = nil; S.bomb_id = nil; return; end
 	local label = string.format("BOMB  %.2f", rem);
 	local col = rem > 10 and {80,220,80} or (rem > 5 and {255,200,0} or {255,60,60});
 	local sw, sh = dx9.size().width, dx9.size().height;
@@ -548,7 +597,7 @@ local function draw_player_esp()
 			end
 			if names and e.name then
 				local lbl = e.name;
-				if on("player_distance") then lbl = lbl .. " [" .. math.floor(e.dist) .. "st]"; end
+				if on("player_distance") then lbl = lbl .. " [" .. math.floor(e.dist_m) .. "m]"; end
 				dx9.DrawString({top.x - dx9.CalcTextWidth(lbl)/2, y1-14}, c, lbl);
 			end
 		end
@@ -561,7 +610,7 @@ local function draw_chinahat()
 		local s = w2s(e.head.x, e.head.y + 0.85, e.head.z);
 		if s then
 			local col = on("chinahat_rainbow") and rainbow() or rgb("chinahat");
-			local sc = math.max(0.3, math.min(2, 50 / math.max(e.dist, 1)));
+			local sc = math.max(0.3, math.min(2, 14 / math.max(e.dist_m, 1)));
 			local r, top = 28*sc, {s.x, s.y - 18*sc};
 			for i = 0, 7 do
 				local a1, a2 = i/8*6.283, (i+1)/8*6.283;
@@ -625,13 +674,14 @@ local function scan_items()
 
 	if scan_w then
 		items.weapons, items.grenades, items.midair = {}, {}, {};
+		local max_wep = m_to_studs(num("weapons_max_dist", config.items.weapons_max_dist or 50));
 		if cache.debris then
 			for _, item in next, dx9.GetChildren(cache.debris) do
 				if valid(dx9.FindFirstChild(item,"Ammo")) and valid(dx9.FindFirstChild(item,"StoredAmmo")) and valid(dx9.FindFirstChild(item,"Mag")) then
 					local n = dx9.GetName(item);
 					if WEAPONS[n] then
 						local mp = pos(dx9.FindFirstChild(item, "Mag"));
-						if mp then
+						if mp and (not cache.local_pos or dist3(mp, cache.local_pos) <= max_wep) then
 							local txt = n;
 							if on("weapons_show_ammo") then local a = dx9.GetIntValue(dx9.FindFirstChild(item,"Ammo")); if a then txt = n.." ["..a.."]"; end end
 							items.weapons[#items.weapons+1] = { pos = mp, text = txt };
