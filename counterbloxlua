@@ -1,476 +1,235 @@
 -- CounterBlox UI | dx9ware | By kure | @anticurve
 
+local BUILD = "4.0";
+local BIND_SEP = " | ";
+local TRIG_KEY = "XBUTTON1";
+
 local DEFAULTS = {
 	urls = {
 		UI = "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
 		Script = "https://raw.githubusercontent.com/kurekurekure/counterbloxluav2/refs/heads/main/counterbloxlua";
 	};
-	settings = {
-		menu_toggle_keybind = "[F2]";
-		esp_enabled = true;
-		watermark_enabled = true;
-	};
-	combat = {
-		aimbot_enabled = false;
-		aimbot_mode = "normal";
-		aim_bone = "Head";
-		only_rmb = true;
-		smoothing = 15;
-		aimbot_sens = 50;
-		aimbot_fov = 90;
-		fov_circle = true;
-		rcs_enabled = false;
-		rcs_h = 80;
-		rcs_v = 80;
-		triggerbot_enabled = false;
-		triggerbot_delay = 50;
-		triggerbot_radius = 14;
-		triggerbot_key = "XBUTTON1";
-	};
-	world = {};
+	settings = { menu_toggle_keybind = "[F2]"; esp_enabled = true; watermark_enabled = true; };
+	combat = { triggerbot_enabled = false; triggerbot_delay = 40; triggerbot_radius = 14; triggerbot_key = TRIG_KEY; };
 	players = {
-		teamcheck_enabled = true;
-		player_esp_enabled = true;
-		player_boxes = true;
-		player_hp = true;
-		player_names = true;
-		player_distance = true;
-		player_max_dist = 500;
-		player_esp_color = { 255, 255, 255 };
-		chinahat_enabled = false;
-		chinahat_rainbow = true;
-		chinahat_color = { 255, 0, 0 };
-		chams_enabled = false;
-		chams_enemy_color = { 255, 0, 0 };
-		chams_team_color = { 0, 255, 0 };
+		teamcheck_enabled = true; player_esp_enabled = true; player_boxes = true; player_hp = true;
+		player_names = true; player_distance = true; player_max_dist = 500; player_esp_color = { 255, 255, 255 };
+		chinahat_enabled = false; chinahat_rainbow = true; chinahat_color = { 255, 0, 0 };
+		chams_enabled = false; chams_enemy_color = { 255, 0, 0 }; chams_team_color = { 0, 255, 0 };
 	};
 	items = {
-		bombs_enabled = true;
-		bomb_timer = true;
-		bombs_color = { 255, 255, 0 };
-		weapons_enabled = true;
-		weapons_color = { 0, 255, 255 };
-		weapons_show_ammo = true;
-		grenades_enabled = true;
-		grenades_color = { 255, 0, 255 };
-		midair_grenades_enabled = true;
-		midair_grenades_color = { 255, 128, 0 };
-		smoke_radius_enabled = true;
-		smoke_radius_color = { 0, 255, 0 };
-		molotov_radius_enabled = true;
-		molotov_radius_color = { 255, 165, 0 };
+		bombs_enabled = true; bomb_timer = true; bombs_color = { 255, 255, 0 };
+		weapons_enabled = true; weapons_color = { 0, 255, 255 }; weapons_show_ammo = true;
+		grenades_enabled = true; grenades_color = { 255, 0, 255 };
+		midair_grenades_enabled = true; midair_grenades_color = { 255, 128, 0 };
+		smoke_radius_enabled = true; smoke_radius_color = { 0, 255, 0 };
+		molotov_radius_enabled = true; molotov_radius_color = { 255, 165, 0 };
 	};
 	hud = {
-		radar_enabled = true;
-		snaplines = false;
-		crosshair_enabled = false;
-		crosshair_style = "gap cross";
-		crosshair_size = 8;
-		crosshair_gap = 4;
-		crosshair_color = { 255, 255, 255 };
-		keybind_hud = true;
+		radar_enabled = true; snaplines = false; crosshair_enabled = false;
+		crosshair_style = "gap cross"; crosshair_size = 8; crosshair_gap = 4;
+		crosshair_color = { 255, 255, 255 }; keybind_hud = true;
 	};
 };
 
-local function merge_defaults(dst, src)
+local function merge(dst, src)
 	for k, v in pairs(src) do
-		if type(v) == "table" then
-			dst[k] = dst[k] or {};
-			merge_defaults(dst[k], v);
-		elseif dst[k] == nil then
-			dst[k] = v;
-		end
+		if type(v) == "table" then dst[k] = dst[k] or {}; merge(dst[k], v);
+		elseif dst[k] == nil then dst[k] = v; end
 	end
 end
 
 _G.counterblox_config = _G.counterblox_config or {};
-merge_defaults(_G.counterblox_config, DEFAULTS);
-config = _G.counterblox_config;
+merge(_G.counterblox_config, DEFAULTS);
+local config = _G.counterblox_config;
 config.urls = config.urls or {};
 
--- Persistent state (survives per-frame re-run).
 local S = _G.__cb_state;
-if S == nil then
+if not S then
 	S = {
-		greeted = false;
-		rainbow_t = 0;
-		rainbow_i = 1;
-		rainbow_fc = 0;
-		rcs_x = 0;
-		rcs_y = 0;
-		bomb_t0 = nil;
-		items = {
-			weapons = {};
-			grenades = {};
-			midair = {};
-			smokes = {};
-			fires = {};
-		};
-		radar_x = nil;
-		radar_y = nil;
-		radar_drag = nil;
-		bomb_x = nil;
-		bomb_y = nil;
-		bomb_drag = nil;
-		kb_hud_x = nil;
-		kb_hud_y = nil;
-		kb_hud_drag = nil;
-		keybind_labels = {};
-		keybind_names = {};
-		profiles = {};
-		default_flags = nil;
-		triggerbot_last = 0;
+		greeted = false; rainbow_t = 0; rainbow_i = 1; rainbow_fc = 0; bomb_t0 = nil; trig_last = 0;
+		items = { weapons = {}; grenades = {}; midair = {}; smokes = {}; fires = {}; };
+		radar_x = nil; radar_y = nil; radar_drag = nil;
+		bomb_x = nil; bomb_y = nil; bomb_drag = nil;
+		kb_hud_x = nil; kb_hud_y = nil; kb_hud_drag = nil;
+		keybind_names = {}; keybind_labels = {}; profiles = {}; default_flags = nil;
 		cache = {
-			frame = 0;
-			players = {};
-			player_entries = nil;
-			player_entries_tick = -1;
-			local_pos = nil;
-			local_team = nil;
-			local_player = nil;
-			datamodel = nil;
-			workspace = nil;
-			debris = nil;
-			ray_ignore = nil;
+			frame = 0; players = {}; player_entries = nil; player_entries_tick = -1;
+			local_pos = nil; local_team = nil; local_player = nil;
+			datamodel = nil; workspace = nil; debris = nil; ray_ignore = nil;
 		};
 	};
 	_G.__cb_state = S;
 end
-S.items = S.items or {
-	weapons = {};
-	grenades = {};
-	midair = {};
-	smokes = {};
-	fires = {};
-};
-S.keybind_labels = S.keybind_labels or {};
+S.items = S.items or { weapons = {}; grenades = {}; midair = {}; smokes = {}; fires = {}; };
 S.keybind_names = S.keybind_names or {};
+S.keybind_labels = S.keybind_labels or {};
 S.profiles = S.profiles or {};
+S.trig_last = S.trig_last or S.triggerbot_last or 0;
 local cache = S.cache;
-cache.player_entries_tick = cache.player_entries_tick or -1;
 
 do
-	local ui_url = config.urls.UI or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
-	local src = dx9.Get(ui_url);
+	local src = dx9.Get(config.urls.UI or DEFAULTS.urls.UI);
 	if type(src) == "string" and src ~= "" then
-		local chunk = loadstring(src);
-		if chunk then chunk(); end
+		local fn = loadstring(src);
+		if fn then fn(); end
 	end
 end
 
 if type(library) ~= "table" or type(library.Window) ~= "function" then
 	dx9.ShowConsole(true);
-	if type(print) == "function" then print("[CB] seraph9 failed to load"); end
 	return;
 end
 
-local function notify(msg)
-	if type(send_notif) == "function" then send_notif(msg); end
-end
+local function notify(m) if send_notif then send_notif(m); end end
+local function on(f) return library.flags[f] == true; end
+local function num(f, d) local v = library.flags[f]; return type(v) == "number" and v or d; end
+local function str(f, d) local v = library.flags[f]; return type(v) == "string" and v or d; end
+local function rgb(p) return { library.flags[p .. "_r"] or 0, library.flags[p .. "_g"] or 0, library.flags[p .. "_b"] or 0 }; end
+local function valid(p) return p ~= nil and p ~= 0 and p ~= false; end
 
-local function flag_on(name)
-	return library.flags[name] == true;
-end
-
-local function flag_num(name, default)
-	local v = library.flags[name];
-	if type(v) == "number" then return v; end
-	return default or 0;
-end
-
-local function flag_str(name, default)
-	local v = library.flags[name];
-	if type(v) == "string" then return v; end
-	return default or "";
-end
-
-local function rgb(prefix)
-	return {
-		library.flags[prefix .. "_r"] or 0;
-		library.flags[prefix .. "_g"] or 0;
-		library.flags[prefix .. "_b"] or 0;
-	};
-end
-
-local BIND_ALIASES = {
-	MB4 = "XBUTTON1";
-	M4 = "XBUTTON1";
-	MOUSE4 = "XBUTTON1";
-	MB5 = "XBUTTON2";
-	M5 = "XBUTTON2";
-	MOUSE5 = "XBUTTON2";
+local BIND_ALIAS = { MB4 = "XBUTTON1", M4 = "XBUTTON1", MOUSE4 = "XBUTTON1", MB5 = "XBUTTON2", M5 = "XBUTTON2", MOUSE5 = "XBUTTON2" };
+local BIND_LABEL = { MBUTTON = "M3", RBUTTON = "M2", LBUTTON = "M1", XBUTTON1 = "M4", XBUTTON2 = "M5", MB4 = "M4", MB5 = "M5",
+	LCONTROL = "CTRL", RCONTROL = "CTRL", CONTROL = "CTRL", LSHIFT = "SHIFT", RSHIFT = "SHIFT", LMENU = "ALT", RMENU = "ALT" };
+local BIND_CODES = {
+	CTRL = { "[LCONTROL]", "[RCONTROL]", "[CONTROL]" }, SHIFT = { "[LSHIFT]", "[RSHIFT]", "[SHIFT]" },
+	ALT = { "[LMENU]", "[RMENU]", "[MENU]" }, MBUTTON = { "[MBUTTON]" }, RBUTTON = { "[RBUTTON]" }, LBUTTON = { "[LBUTTON]" },
+	XBUTTON1 = { "[XBUTTON1]" }, XBUTTON2 = { "[XBUTTON2]" }, MB4 = { "[XBUTTON1]" }, MB5 = { "[XBUTTON2]" },
 };
 
-local KEY_DISPLAY = {
-	MBUTTON = "M3";
-	RBUTTON = "M2";
-	LBUTTON = "M1";
-	XBUTTON1 = "M4";
-	XBUTTON2 = "M5";
-	MB4 = "M4";
-	MB5 = "M5";
-	LCONTROL = "CTRL";
-	RCONTROL = "CTRL";
-	CONTROL = "CTRL";
-	LSHIFT = "SHIFT";
-	RSHIFT = "SHIFT";
-	LMENU = "ALT";
-	RMENU = "ALT";
-};
-
-local KEY_HELD_CODES = {
-	CTRL = { "[LCONTROL]", "[RCONTROL]", "[CONTROL]" };
-	LCONTROL = { "[LCONTROL]" };
-	RCONTROL = { "[RCONTROL]" };
-	CONTROL = { "[CONTROL]" };
-	SHIFT = { "[LSHIFT]", "[RSHIFT]", "[SHIFT]" };
-	LSHIFT = { "[LSHIFT]" };
-	RSHIFT = { "[RSHIFT]" };
-	ALT = { "[LMENU]", "[RMENU]", "[MENU]" };
-	LMENU = { "[LMENU]" };
-	RMENU = { "[RMENU]" };
-	MENU = { "[MENU]" };
-	MBUTTON = { "[MBUTTON]" };
-	RBUTTON = { "[RBUTTON]" };
-	LBUTTON = { "[LBUTTON]" };
-	XBUTTON1 = { "[XBUTTON1]" };
-	XBUTTON2 = { "[XBUTTON2]" };
-	MB4 = { "[XBUTTON1]" };
-	MB5 = { "[XBUTTON2]" };
-	M4 = { "[XBUTTON1]" };
-	M5 = { "[XBUTTON2]" };
-};
-
-local function normalize_bind_name(name)
-	if type(name) ~= "string" or name == "" then return ""; end
-	name = name:upper();
-	local inner = name:match("^%[(.+)%]$");
-	if inner then name = inner; end
-	return name;
+local function norm_bind(s)
+	if type(s) ~= "string" or s == "" then return ""; end
+	s = s:upper();
+	local inner = s:match("^%[(.+)%]$");
+	return inner or s;
 end
 
-local function resolve_bind_name(name)
-	name = normalize_bind_name(name);
-	if name == "" then return ""; end
-	return BIND_ALIASES[name] or name;
+local function resolve_bind(s)
+	s = norm_bind(s);
+	return s == "" and "" or (BIND_ALIAS[s] or s);
 end
 
-local function format_bind_key(key)
-	key = resolve_bind_name(key);
-	if key == "" then return "?"; end
-	return KEY_DISPLAY[key] or key;
+local function bind_label(s)
+	s = resolve_bind(s);
+	return s == "" and "?" or (BIND_LABEL[s] or s);
 end
 
-local function get_bind_key_name(flag, fallback)
+local function bind_name(flag, fb)
 	if _G._sr and _G._sr.items then
 		for _, it in pairs(_G._sr.items) do
 			if it.type == "keybind" and it.flag == flag and it.key and it.key ~= "NONE" then
-				return resolve_bind_name(it.key);
+				return resolve_bind(it.key);
 			end
 		end
 	end
 	local v = library.flags[flag];
-	if type(v) == "string" and v ~= "" then
-		return resolve_bind_name(v);
-	end
-	if S.keybind_names and S.keybind_names[flag] then
-		return S.keybind_names[flag];
-	end
-	return resolve_bind_name(fallback);
+	if type(v) == "string" and v ~= "" then return resolve_bind(v); end
+	return resolve_bind(fb);
 end
 
-local function key_down(code)
+local function side_down(code)
 	if dx9.GetKey() == code then return true; end
 	local keys = dx9.GetKeys();
 	if type(keys) == "table" then
-		for _, k in ipairs(keys) do
-			if k == code then return true; end
-		end
+		for _, k in ipairs(keys) do if k == code then return true; end end
 	end
 	return false;
 end
 
-local function sync_keybind_name(flag, fallback)
-	S.keybind_names = S.keybind_names or {};
-	local name = get_bind_key_name(flag, fallback);
-	S.keybind_names[flag] = name;
-	S.keybind_labels[flag] = format_bind_key(name);
+local function sync_bind(flag, fb)
+	local n = bind_name(flag, fb);
+	S.keybind_names[flag] = n;
+	S.keybind_labels[flag] = bind_label(n);
 	return S.keybind_labels[flag];
 end
 
-local function keybind_held(flag, fallback)
+local function bind_held(flag, fb)
 	if library.flags[flag] == true then return true; end
-
-	local name = get_bind_key_name(flag, fallback);
-	local codes = KEY_HELD_CODES[name];
+	local n = bind_name(flag, fb);
+	local codes = BIND_CODES[n];
 	if codes then
-		for _, code in ipairs(codes) do
-			if code == "[XBUTTON1]" or code == "[XBUTTON2]" then
-				if key_down(code) then return true; end
-			elseif dx9.GetKey() == code then
-				return true;
-			end
+		for _, c in ipairs(codes) do
+			if c == "[XBUTTON1]" or c == "[XBUTTON2]" then
+				if side_down(c) then return true; end
+			elseif dx9.GetKey() == c then return true; end
 		end
 	end
-
-	if dx9.GetKey() == "[" .. name .. "]" then return true; end
-
-	if name == "RBUTTON" or name == "M2" then return dx9.isRightClickHeld(); end
-	if name == "LBUTTON" or name == "M1" then return dx9.isLeftClickHeld(); end
-	if name == "MBUTTON" or name == "M3" then return dx9.GetKey() == "[MBUTTON]"; end
-	if name == "XBUTTON1" or name == "MB4" or name == "M4" or name == "MOUSE4" then
-		return key_down("[XBUTTON1]");
-	end
-	if name == "XBUTTON2" or name == "MB5" or name == "M5" or name == "MOUSE5" then
-		return key_down("[XBUTTON2]");
-	end
-
+	if dx9.GetKey() == "[" .. n .. "]" then return true; end
+	if n == "RBUTTON" or n == "M2" then return dx9.isRightClickHeld(); end
+	if n == "LBUTTON" or n == "M1" then return dx9.isLeftClickHeld(); end
+	if n == "XBUTTON1" or n == "MB4" or n == "M4" or n == "MOUSE4" then return side_down("[XBUTTON1]"); end
+	if n == "XBUTTON2" or n == "MB5" or n == "M5" or n == "MOUSE5" then return side_down("[XBUTTON2]"); end
 	return false;
 end
 
-local function on_keybind_set(flag, value)
-	S.keybind_names = S.keybind_names or {};
-	if type(value) == "string" and value ~= "" then
-		S.keybind_names[flag] = resolve_bind_name(value);
-		S.keybind_labels[flag] = format_bind_key(value);
+local function on_bind(flag, v)
+	if type(v) == "string" and v ~= "" then
+		S.keybind_names[flag] = resolve_bind(v);
+		S.keybind_labels[flag] = bind_label(v);
 	end
 end
 
-local function snapshot_flags()
-	local copy = {};
+local function snap_flags()
+	local t = {};
 	for k, v in pairs(library.flags) do
-		if type(v) == "boolean" or type(v) == "number" or type(v) == "string" then
-			copy[k] = v;
-		end
+		if type(v) == "boolean" or type(v) == "number" or type(v) == "string" then t[k] = v; end
 	end
-	return copy;
+	return t;
 end
 
-local function apply_flags(saved)
-	for k, v in pairs(saved) do
-		library.flags[k] = v;
-	end
+local function apply_flags(t) for k, v in pairs(t) do library.flags[k] = v; end end
+
+local function add_rgb(sec, p, lbl, def)
+	sec:slider({ name = lbl .. " R", flag = p .. "_r", min = 0, max = 255, default = def[1], interval = 1 });
+	sec:slider({ name = lbl .. " G", flag = p .. "_g", min = 0, max = 255, default = def[2], interval = 1 });
+	sec:slider({ name = lbl .. " B", flag = p .. "_b", min = 0, max = 255, default = def[3], interval = 1 });
 end
 
--- Color sliders own their values via seraph flags (default applied once).
-local function add_rgb(section, prefix, label, default)
-	section:slider({ name = label .. " R", flag = prefix .. "_r", min = 0, max = 255, default = default[1], interval = 1 });
-	section:slider({ name = label .. " G", flag = prefix .. "_g", min = 0, max = 255, default = default[2], interval = 1 });
-	section:slider({ name = label .. " B", flag = prefix .. "_b", min = 0, max = 255, default = default[3], interval = 1 });
+local function pos(inst)
+	local p = dx9.GetPosition(inst);
+	return type(p) == "table" and p.x and p or nil;
 end
 
-local function get_position(instance)
-	local pos = dx9.GetPosition(instance);
-	if type(pos) == "table" and pos.x ~= nil then return pos; end
-	return nil;
+local function w2s(x, y, z)
+	local s = dx9.WorldToScreen({ x, y, z });
+	if type(s) == "table" and s.x and s.y and s.x >= 0 and s.y >= 0 then return s; end
 end
 
-local function world_to_screen_loose(x, y, z)
-	local screen = dx9.WorldToScreen({ x, y, z });
-	if type(screen) ~= "table" or screen.x == nil or screen.y == nil then return nil; end
-	if screen.x < 0 or screen.y < 0 then return nil; end
-	return screen;
-end
-
-local function get_cframe(part)
+local function cframe(part)
 	local cf = dx9.GetCFrame(part);
-	if type(cf) == "table" and cf.RightVector and cf.LookVector and cf.UpVector then return cf; end
-	local _, right, look, up = dx9.GetCFrame(part);
-	if type(right) == "table" and type(look) == "table" and type(up) == "table" then
-		return { RightVector = right; LookVector = look; UpVector = up; };
-	end
-	return nil;
+	if type(cf) == "table" and cf.RightVector then return cf; end
+	local _, r, l, u = dx9.GetCFrame(part);
+	if type(r) == "table" then return { RightVector = r, LookVector = l, UpVector = u }; end
 end
-
-local function valid_pointer(ptr)
-	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
-end
-
-local BUILD = "3.9";
-local BIND_SEP = " | ";
 
 local function menu_open()
-	if _G._sr then
-		if _G._sr.visible == true then return true; end
-		if _G._sr.open == true then return true; end
-	end
-	if type(library) == "table" and library.opened == true then return true; end
-	return false;
+	if _G._sr and (_G._sr.visible or _G._sr.open) then return true; end
+	return library.opened == true;
 end
 
 local function shift_held()
-	local key = dx9.GetKey();
-	if key == "[LSHIFT]" or key == "[RSHIFT]" then return true; end
+	if dx9.GetKey() == "[LSHIFT]" or dx9.GetKey() == "[RSHIFT]" then return true; end
 	local keys = dx9.GetKeys();
 	if type(keys) == "table" then
-		for _, k in ipairs(keys) do
-			if k == "[LSHIFT]" or k == "[RSHIFT]" then return true; end
-		end
+		for _, k in ipairs(keys) do if k == "[LSHIFT]" or k == "[RSHIFT]" then return true; end end
 	end
 	return false;
 end
 
-local function can_hud_drag()
-	return menu_open() or shift_held();
-end
-
-local function handle_panel_drag(pos_x, pos_y, drag_key, rx, ry, w, header_h)
-	if can_hud_drag() then
-		local mouse = dx9.GetMouse();
-		local mx, my = mouse.x, mouse.y;
+local function panel_drag(px, py, dk, x, y, w, hh)
+	if menu_open() or shift_held() then
+		local m = dx9.GetMouse();
 		if dx9.isLeftClickHeld() then
-			if S[drag_key] then
-				S[pos_x] = mx - S[drag_key].ox;
-				S[pos_y] = my - S[drag_key].oy;
-			elseif mx >= rx and mx <= rx + w and my >= ry and my <= ry + header_h then
-				S[drag_key] = { ox = mx - rx; oy = my - ry; };
-			end
-		else
-			S[drag_key] = nil;
-		end
-	else
-		S[drag_key] = nil;
-	end
-	return math.floor(S[pos_x]), math.floor(S[pos_y]);
+			if S[dk] then S[px] = m.x - S[dk].ox; S[py] = m.y - S[dk].oy;
+			elseif m.x >= x and m.x <= x + w and m.y >= y and m.y <= y + hh then S[dk] = { ox = m.x - x, oy = m.y - y }; end
+		else S[dk] = nil; end
+	else S[dk] = nil; end
+	return math.floor(S[px]), math.floor(S[py]);
 end
 
-local function screen_center()
-	local sw = dx9.size().width;
-	local sh = dx9.size().height;
-	return sw / 2, sh / 2;
-end
-
-local function get_planted_bomb()
-	if not cache.workspace then return nil; end
-	local c4 = dx9.FindFirstChild(cache.workspace, "C4");
-	if valid_pointer(c4) and valid_pointer(dx9.FindFirstChild(c4, "Handle")) then
-		return c4;
-	end
-	return nil;
-end
-
-local function fov_pixels()
-	local fov_deg = flag_num("aimbot_fov", 90);
-	return (fov_deg / 90) * (dx9.size().height * 0.42);
-end
-
-local function get_aim_screen(entry)
-	local bone = flag_str("aim_bone", "Head");
-	if entry.name and dx9.get_info then
-		local info = dx9.get_info(entry.name, bone);
-		if type(info) == "table" and type(info.Position) == "table" then
-			local p = info.Position;
-			local s = world_to_screen_loose(p.x, p.y, p.z);
-			if s then return s; end
-		end
-	end
-	if bone == "Head" and entry.head_pos then
-		return world_to_screen_loose(entry.head_pos.x, entry.head_pos.y, entry.head_pos.z);
-	end
-	if entry.root_pos then
-		return world_to_screen_loose(entry.root_pos.x, entry.root_pos.y + 1.2, entry.root_pos.z);
-	end
-	return nil;
+local function scr_center()
+	local sz = dx9.size();
+	return sz.width / 2, sz.height / 2;
 end
 
 local function dist3(a, b)
@@ -478,1022 +237,490 @@ local function dist3(a, b)
 	return math.sqrt(dx * dx + dy * dy + dz * dz);
 end
 
-local function should_skip_player(player_inst, is_teammate)
-	if player_inst == cache.local_player then return true; end
-	if flag_on("teamcheck_enabled") and is_teammate then return true; end
-	return false;
-end
-
-local function refresh_local_pos()
-	local info = dx9.get_localplayer();
-	if info and info.Position then
-		cache.local_pos = info.Position;
-	end
+local function planted_bomb()
+	if not cache.workspace then return; end
+	local c4 = dx9.FindFirstChild(cache.workspace, "C4");
+	if valid(c4) and valid(dx9.FindFirstChild(c4, "Handle")) then return c4; end
 end
 
 local function refresh_cache()
 	cache.frame = cache.frame + 1;
-	refresh_local_pos();
-
-	if cache.frame % 8 ~= 0 and cache.datamodel then return; end
+	local lp = dx9.get_localplayer();
+	if lp and lp.Position then cache.local_pos = lp.Position; end
+	if cache.frame % 10 ~= 0 and cache.datamodel then return; end
 
 	cache.datamodel = dx9.GetDatamodel();
 	if not cache.datamodel then return; end
 
-	local players_folder = dx9.FindFirstChild(cache.datamodel, "Players");
+	local pf = dx9.FindFirstChild(cache.datamodel, "Players");
 	cache.workspace = dx9.FindFirstChild(cache.datamodel, "Workspace");
-	cache.players = players_folder and dx9.GetChildren(players_folder) or {};
-	cache.debris = cache.workspace and dx9.FindFirstChild(cache.workspace, "Debris") or nil;
-	cache.ray_ignore = cache.workspace and dx9.FindFirstChild(cache.workspace, "Ray_Ignore") or nil;
-
-	cache.local_pos = nil;
+	cache.players = pf and dx9.GetChildren(pf) or {};
+	cache.debris = cache.workspace and dx9.FindFirstChild(cache.workspace, "Debris");
+	cache.ray_ignore = cache.workspace and dx9.FindFirstChild(cache.workspace, "Ray_Ignore");
 	cache.local_team = nil;
 	cache.local_player = nil;
 
-	local local_info = dx9.get_localplayer();
-	if local_info and local_info.Position then
-		cache.local_pos = local_info.Position;
-	end
-
+	if lp and lp.Position then cache.local_pos = lp.Position; end
 	for _, p in next, cache.players do
 		local char = dx9.GetCharacter(p);
-		if char then
-			local root = dx9.FindFirstChild(char, "HumanoidRootPart");
-			if root then
-				local pos = get_position(root);
-				if pos and cache.local_pos and dist3(pos, cache.local_pos) < 2 then
-					cache.local_team = dx9.GetTeam(p);
-					cache.local_player = p;
-					break;
-				end
-			end
+		local root = char and dx9.FindFirstChild(char, "HumanoidRootPart");
+		local rp = root and pos(root);
+		if rp and cache.local_pos and dist3(rp, cache.local_pos) < 2 then
+			cache.local_team = dx9.GetTeam(p);
+			cache.local_player = p;
+			break;
 		end
 	end
 end
 
-local function get_player_entries()
-	local entries = {};
-	local max_dist = flag_num("player_max_dist", config.players.player_max_dist or 500);
-
-	for _, player_inst in next, cache.players do
-		local char = dx9.GetCharacter(player_inst);
-		if char then
-			local is_teammate = false;
-			if cache.local_team then
-				local pt = dx9.GetTeam(player_inst);
-				if pt and pt == cache.local_team then is_teammate = true; end
-			end
-			if not should_skip_player(player_inst, is_teammate) then
-				local head = dx9.FindFirstChild(char, "Head");
-				local root = dx9.FindFirstChild(char, "HumanoidRootPart")
-					or dx9.FindFirstChild(char, "Torso")
-					or dx9.FindFirstChild(char, "UpperTorso");
-				local humanoid = dx9.FindFirstChild(char, "Humanoid");
-				if head and root then
-					local head_pos = get_position(head);
-					local root_pos = get_position(root);
-					if head_pos and root_pos then
-						local in_range = true;
-						if cache.local_pos then
-							in_range = dist3(root_pos, cache.local_pos) <= max_dist;
-						end
-						if in_range then
-							entries[#entries + 1] = {
-								player = player_inst;
-								character = char;
-								head = head;
-								root = root;
-								humanoid = humanoid;
-								name = dx9.GetName(player_inst);
-								is_teammate = is_teammate;
-								head_pos = head_pos;
-								root_pos = root_pos;
-								distance = cache.local_pos and dist3(root_pos, cache.local_pos) or 0;
-							};
-						end
+local function get_players()
+	if cache.player_entries_tick == cache.frame then return cache.player_entries or {}; end
+	local out, maxd = {}, num("player_max_dist", config.players.player_max_dist or 500);
+	for _, p in next, cache.players do
+		if p ~= cache.local_player then
+			local char = dx9.GetCharacter(p);
+			if char then
+				local mate = cache.local_team and dx9.GetTeam(p) == cache.local_team;
+				if not (on("teamcheck_enabled") and mate) then
+					local head = dx9.FindFirstChild(char, "Head");
+					local root = dx9.FindFirstChild(char, "HumanoidRootPart") or dx9.FindFirstChild(char, "Torso") or dx9.FindFirstChild(char, "UpperTorso");
+					local hp, rp = head and pos(head), root and pos(root);
+					if hp and rp and (not cache.local_pos or dist3(rp, cache.local_pos) <= maxd) then
+						out[#out + 1] = {
+							character = char, humanoid = dx9.FindFirstChild(char, "Humanoid"),
+							name = dx9.GetName(p), mate = mate, head = hp, root = rp,
+							dist = cache.local_pos and dist3(rp, cache.local_pos) or 0,
+							head_scr = w2s(hp.x, hp.y, hp.z),
+						};
 					end
 				end
 			end
 		end
 	end
-	return entries;
+	cache.player_entries = out;
+	cache.player_entries_tick = cache.frame;
+	return out;
 end
 
-local function get_player_entries_cached()
-	if cache.player_entries_tick ~= cache.frame then
-		cache.player_entries = get_player_entries();
-		cache.player_entries_tick = cache.frame;
-	end
-	return cache.player_entries or {};
-end
-
-local function parse_toggle_key(keybind)
-	if type(keybind) ~= "string" then return "F2"; end
-	return keybind:match("%[(.-)%]") or keybind;
+local function parse_key(k)
+	return type(k) == "string" and (k:match("%[(.-)%]") or k) or "F2";
 end
 
 local window = library:Window({
 	name = "CounterBlox UI | By kure | @anticurve";
-	toggle_key = parse_toggle_key(config.settings.menu_toggle_keybind);
+	toggle_key = parse_key(config.settings.menu_toggle_keybind);
 });
 
-local tab_aimbot = window:tab({ name = "aimbot" });
+local tab_combat = window:tab({ name = "combat" });
 local tab_visuals = window:tab({ name = "visuals" });
 local tab_items = window:tab({ name = "items" });
 local tab_config = window:tab({ name = "config" });
 
-local col_combat = tab_aimbot:column();
-local combat_ms = col_combat:multisection({ name = "combat", sections = { "aimbot", "rcs", "trigger" } });
-local s_aim = combat_ms:get_tab("aimbot");
-local s_rcs = combat_ms:get_tab("rcs");
-local s_trigger = combat_ms:get_tab("trigger");
+local s_trig = tab_combat:column():section({ name = "triggerbot" });
+s_trig:toggle({ name = "enabled", flag = "triggerbot_enabled", default = config.combat.triggerbot_enabled });
+s_trig:keybind({ name = "hold key", flag = "triggerbot_key", default = config.combat.triggerbot_key or TRIG_KEY,
+	callback = function(v) on_bind("triggerbot_key", v); end });
+s_trig:slider({ name = "delay", flag = "triggerbot_delay", min = 0, max = 200, default = config.combat.triggerbot_delay or 40, interval = 5, suffix = " ms" });
+s_trig:slider({ name = "radius", flag = "triggerbot_radius", min = 4, max = 40, default = config.combat.triggerbot_radius or 14, interval = 1, suffix = " px" });
 
-s_aim:toggle({ name = "enabled"; flag = "aimbot_enabled"; default = config.combat.aimbot_enabled; });
-s_aim:keybind({ name = "hold key"; flag = "aimbot_key"; default = "MBUTTON"; callback = function(v) on_keybind_set("aimbot_key", v); end; });
-s_aim:dropdown({ name = "mode"; flag = "aimbot_mode"; items = { "normal", "silent", "legit" }; default = config.combat.aimbot_mode or "normal"; });
-s_aim:dropdown({ name = "aim bone"; flag = "aim_bone"; items = { "Head", "Torso", "HumanoidRootPart" }; default = config.combat.aim_bone or "Head"; });
-s_aim:toggle({ name = "only rmb"; flag = "only_rmb"; default = config.combat.only_rmb ~= false; });
-s_aim:slider({ name = "smoothing"; flag = "smoothing"; min = 1; max = 100; default = config.combat.smoothing or 15; interval = 1; });
-s_aim:slider({ name = "sensitivity"; flag = "aimbot_sens"; min = 1; max = 100; default = config.combat.aimbot_sens or 50; interval = 1; });
-s_aim:slider({ name = "fov"; flag = "aimbot_fov"; min = 10; max = 360; default = config.combat.aimbot_fov or 90; interval = 5; suffix = " deg"; });
-s_aim:toggle({ name = "fov circle"; flag = "fov_circle"; default = config.combat.fov_circle ~= false; });
+local col_vis, col_world = tab_visuals:column(), tab_visuals:column();
+local s_esp = col_vis:section({ name = "player esp" });
+s_esp:toggle({ name = "enabled", flag = "player_esp_enabled", default = config.players.player_esp_enabled });
+s_esp:toggle({ name = "boxes", flag = "player_boxes", default = config.players.player_boxes ~= false });
+s_esp:toggle({ name = "health bar", flag = "player_hp", default = config.players.player_hp ~= false });
+s_esp:toggle({ name = "names", flag = "player_names", default = config.players.player_names ~= false });
+s_esp:toggle({ name = "distance", flag = "player_distance", default = config.players.player_distance ~= false });
+s_esp:slider({ name = "max dist", flag = "player_max_dist", min = 10, max = 2000, default = config.players.player_max_dist or 500, interval = 10, suffix = " st" });
+add_rgb(s_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
 
-s_rcs:toggle({ name = "enabled"; flag = "rcs_enabled"; default = config.combat.rcs_enabled; });
-s_rcs:slider({ name = "horizontal"; flag = "rcs_h"; min = 0; max = 100; default = config.combat.rcs_h or 80; interval = 1; suffix = "%"; });
-s_rcs:slider({ name = "vertical"; flag = "rcs_v"; min = 0; max = 100; default = config.combat.rcs_v or 80; interval = 1; suffix = "%"; });
-
-s_trigger:toggle({ name = "enabled"; flag = "triggerbot_enabled"; default = config.combat.triggerbot_enabled; });
-s_trigger:keybind({ name = "hold key"; flag = "triggerbot_key"; default = config.combat.triggerbot_key or "XBUTTON1"; callback = function(v) on_keybind_set("triggerbot_key", v); end; });
-s_trigger:slider({ name = "delay"; flag = "triggerbot_delay"; min = 0; max = 300; default = config.combat.triggerbot_delay or 50; interval = 5; suffix = " ms"; });
-s_trigger:slider({ name = "radius"; flag = "triggerbot_radius"; min = 4; max = 40; default = config.combat.triggerbot_radius or 14; interval = 1; suffix = " px"; });
-
-local col_player_vis = tab_visuals:column();
-local col_world = tab_visuals:column();
-
-local s_player_esp = col_player_vis:section({ name = "player esp" });
-s_player_esp:toggle({ name = "enabled"; flag = "player_esp_enabled"; default = config.players.player_esp_enabled; });
-s_player_esp:toggle({ name = "boxes"; flag = "player_boxes"; default = config.players.player_boxes ~= false; });
-s_player_esp:toggle({ name = "health bar"; flag = "player_hp"; default = config.players.player_hp ~= false; });
-s_player_esp:toggle({ name = "names"; flag = "player_names"; default = config.players.player_names ~= false; });
-s_player_esp:toggle({ name = "distance"; flag = "player_distance"; default = config.players.player_distance ~= false; });
-s_player_esp:slider({ name = "max dist"; flag = "player_max_dist"; min = 10; max = 2000; default = config.players.player_max_dist or 500; interval = 10; suffix = " st"; });
-add_rgb(s_player_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
-
-local s_extra = col_player_vis:section({ name = "extra visuals" });
-s_extra:toggle({ name = "chinahat"; flag = "chinahat_enabled"; default = config.players.chinahat_enabled; });
-s_extra:toggle({ name = "rainbow hat"; flag = "chinahat_rainbow"; default = config.players.chinahat_rainbow; });
+local s_extra = col_vis:section({ name = "extra visuals" });
+s_extra:toggle({ name = "chinahat", flag = "chinahat_enabled", default = config.players.chinahat_enabled });
+s_extra:toggle({ name = "rainbow hat", flag = "chinahat_rainbow", default = config.players.chinahat_rainbow });
 add_rgb(s_extra, "chinahat", "hat", config.players.chinahat_color);
-s_extra:toggle({ name = "chams"; flag = "chams_enabled"; default = config.players.chams_enabled; });
+s_extra:toggle({ name = "chams", flag = "chams_enabled", default = config.players.chams_enabled });
 add_rgb(s_extra, "chams_enemy", "enemy", config.players.chams_enemy_color);
 add_rgb(s_extra, "chams_team", "team", config.players.chams_team_color);
-s_extra:toggle({ name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled; });
+s_extra:toggle({ name = "team check", flag = "teamcheck_enabled", default = config.players.teamcheck_enabled });
 
 local s_hud = col_world:section({ name = "hud" });
-s_hud:toggle({ name = "2d radar"; flag = "radar_enabled"; default = config.hud.radar_enabled ~= false; });
-s_hud:toggle({ name = "snaplines"; flag = "snaplines"; default = config.hud.snaplines == true; });
-s_hud:toggle({ name = "custom crosshair"; flag = "crosshair_enabled"; default = config.hud.crosshair_enabled == true; });
-s_hud:dropdown({ name = "crosshair style"; flag = "crosshair_style"; items = { "gap cross", "cross", "dot", "circle" }; default = config.hud.crosshair_style or "gap cross"; });
-s_hud:slider({ name = "crosshair size"; flag = "crosshair_size"; min = 2; max = 24; default = config.hud.crosshair_size or 8; interval = 1; suffix = " px"; });
-s_hud:slider({ name = "crosshair gap"; flag = "crosshair_gap"; min = 0; max = 12; default = config.hud.crosshair_gap or 4; interval = 1; suffix = " px"; });
+s_hud:toggle({ name = "2d radar", flag = "radar_enabled", default = config.hud.radar_enabled ~= false });
+s_hud:toggle({ name = "snaplines", flag = "snaplines", default = config.hud.snaplines == true });
+s_hud:toggle({ name = "custom crosshair", flag = "crosshair_enabled", default = config.hud.crosshair_enabled == true });
+s_hud:dropdown({ name = "crosshair style", flag = "crosshair_style", items = { "gap cross", "cross", "dot", "circle" }, default = config.hud.crosshair_style or "gap cross" });
+s_hud:slider({ name = "crosshair size", flag = "crosshair_size", min = 2, max = 24, default = config.hud.crosshair_size or 8, interval = 1, suffix = " px" });
+s_hud:slider({ name = "crosshair gap", flag = "crosshair_gap", min = 0, max = 12, default = config.hud.crosshair_gap or 4, interval = 1, suffix = " px" });
 add_rgb(s_hud, "crosshair", "cross", config.hud.crosshair_color or { 255, 255, 255 });
-s_hud:toggle({ name = "keybind hud"; flag = "keybind_hud"; default = config.hud.keybind_hud ~= false; });
+s_hud:toggle({ name = "keybind hud", flag = "keybind_hud", default = config.hud.keybind_hud ~= false });
+col_world:section({ name = "master" }):toggle({ name = "esp enabled", flag = "esp_enabled", default = config.settings.esp_enabled });
 
-local s_master = col_world:section({ name = "master" });
-s_master:toggle({ name = "esp enabled"; flag = "esp_enabled"; default = config.settings.esp_enabled; });
-
-local col_items_left = tab_items:column();
-local col_items_right = tab_items:column();
-
-local s_bombs = col_items_left:section({ name = "bombs" });
-s_bombs:toggle({ name = "bomb esp"; flag = "bombs_enabled"; default = config.items.bombs_enabled; });
-s_bombs:toggle({ name = "bomb timer"; flag = "bomb_timer"; default = config.items.bomb_timer ~= false; });
+local cil, cir = tab_items:column(), tab_items:column();
+local s_bombs = cil:section({ name = "bombs" });
+s_bombs:toggle({ name = "bomb esp", flag = "bombs_enabled", default = config.items.bombs_enabled });
+s_bombs:toggle({ name = "bomb timer", flag = "bomb_timer", default = config.items.bomb_timer ~= false });
 add_rgb(s_bombs, "bombs", "bomb", config.items.bombs_color);
+local s_gren = cil:section({ name = "grenades" });
+s_gren:toggle({ name = "dropped", flag = "grenades_enabled", default = config.items.grenades_enabled });
+add_rgb(s_gren, "grenades", "nade", config.items.grenades_color);
+local s_rad = cil:section({ name = "radius" });
+s_rad:toggle({ name = "smoke", flag = "smoke_radius_enabled", default = config.items.smoke_radius_enabled });
+add_rgb(s_rad, "smoke", "smoke", config.items.smoke_radius_color);
+s_rad:toggle({ name = "molotov", flag = "mol_radius_enabled", default = config.items.molotov_radius_enabled });
+add_rgb(s_rad, "mol", "mol", config.items.molotov_radius_color);
+local s_wep = cir:section({ name = "weapons" });
+s_wep:toggle({ name = "weapon esp", flag = "weapons_enabled", default = config.items.weapons_enabled });
+s_wep:toggle({ name = "show ammo", flag = "weapons_show_ammo", default = config.items.weapons_show_ammo });
+add_rgb(s_wep, "weapons", "weapon", config.items.weapons_color);
+local s_mid = cir:section({ name = "midair" });
+s_mid:toggle({ name = "midair nades", flag = "midair_grenades_enabled", default = config.items.midair_grenades_enabled });
+add_rgb(s_mid, "midair", "midair", config.items.midair_grenades_color);
 
-local s_grenades = col_items_left:section({ name = "grenades" });
-s_grenades:toggle({ name = "dropped"; flag = "grenades_enabled"; default = config.items.grenades_enabled; });
-add_rgb(s_grenades, "grenades", "nade", config.items.grenades_color);
-
-local s_radius = col_items_left:section({ name = "radius" });
-s_radius:toggle({ name = "smoke"; flag = "smoke_radius_enabled"; default = config.items.smoke_radius_enabled; });
-add_rgb(s_radius, "smoke", "smoke", config.items.smoke_radius_color);
-s_radius:toggle({ name = "molotov"; flag = "mol_radius_enabled"; default = config.items.molotov_radius_enabled; });
-add_rgb(s_radius, "mol", "mol", config.items.molotov_radius_color);
-
-local s_weapons = col_items_right:section({ name = "weapons" });
-s_weapons:toggle({ name = "weapon esp"; flag = "weapons_enabled"; default = config.items.weapons_enabled; });
-s_weapons:toggle({ name = "show ammo"; flag = "weapons_show_ammo"; default = config.items.weapons_show_ammo; });
-add_rgb(s_weapons, "weapons", "weapon", config.items.weapons_color);
-
-local s_midair = col_items_right:section({ name = "midair" });
-s_midair:toggle({ name = "midair nades"; flag = "midair_grenades_enabled"; default = config.items.midair_grenades_enabled; });
-add_rgb(s_midair, "midair", "midair", config.items.midair_grenades_color);
-
-local col_config = tab_config:column();
-local col_config2 = tab_config:column();
-
-local s_config = col_config:section({ name = "config" });
-s_config:toggle({ name = "watermark"; flag = "watermark"; default = config.settings.watermark_enabled ~= false; });
-
-local s_profiles = col_config2:section({ name = "profiles" });
-for slot = 1, 3 do
-	s_profiles:button({
-		name = "save " .. slot;
-		callback = function()
-			S.profiles[slot] = snapshot_flags();
-			notify("profile " .. slot .. " saved");
-		end;
-	});
-	s_profiles:button({
-		name = "load " .. slot;
-		callback = function()
-			if S.profiles[slot] then
-				apply_flags(S.profiles[slot]);
-				notify("profile " .. slot .. " loaded");
-			else
-				notify("profile " .. slot .. " empty");
-			end
-		end;
-	});
+local cc1, cc2 = tab_config:column(), tab_config:column();
+cc1:section({ name = "config" }):toggle({ name = "watermark", flag = "watermark", default = config.settings.watermark_enabled ~= false });
+local s_prof = cc2:section({ name = "profiles" });
+for i = 1, 3 do
+	s_prof:button({ name = "save " .. i, callback = function() S.profiles[i] = snap_flags(); notify("profile " .. i .. " saved"); end });
+	s_prof:button({ name = "load " .. i, callback = function()
+		if S.profiles[i] then apply_flags(S.profiles[i]); notify("profile " .. i .. " loaded"); else notify("profile " .. i .. " empty"); end
+	end });
 end
+cc2:section({ name = "reset" }):button({ name = "reset to defaults", callback = function()
+	if S.default_flags then apply_flags(S.default_flags); notify("settings reset"); end
+end });
 
-local s_reset = col_config2:section({ name = "reset" });
-s_reset:button({
-	name = "reset to defaults";
-	callback = function()
-		if S.default_flags then
-			apply_flags(S.default_flags);
-			notify("settings reset");
-		end
-	end;
-});
+sync_bind("triggerbot_key", config.combat.triggerbot_key or TRIG_KEY);
+if not S.greeted then S.greeted = true; S.default_flags = snap_flags(); notify("CounterBlox UI v" .. BUILD); end
 
-sync_keybind_name("aimbot_key", "MBUTTON");
-sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1");
-
-if not S.greeted then
-	S.greeted = true;
-	S.default_flags = snapshot_flags();
-	notify("CounterBlox UI v" .. BUILD);
-end
-
-local rainbowColors = {
-	{ 255, 0, 0 }, { 255, 127, 0 }, { 255, 255, 0 }, { 0, 255, 0 },
-	{ 0, 0, 255 }, { 75, 0, 130 }, { 148, 0, 211 },
-};
-
-local function lerp(a, b, t) return a + (b - a) * t; end
-
-local function rainbow_color()
-	local s = rainbowColors[S.rainbow_i];
-	local e = rainbowColors[(S.rainbow_i % #rainbowColors) + 1];
-	return { lerp(s[1], e[1], S.rainbow_t), lerp(s[2], e[2], S.rainbow_t), lerp(s[3], e[3], S.rainbow_t) };
-end
-
-local function draw_box_2d(x1, y1, x2, y2, color)
-	dx9.DrawLine({ x1, y1 }, { x2, y1 }, color);
-	dx9.DrawLine({ x2, y1 }, { x2, y2 }, color);
-	dx9.DrawLine({ x2, y2 }, { x1, y2 }, color);
-	dx9.DrawLine({ x1, y2 }, { x1, y1 }, color);
-end
-
-local function draw_health_bar(x, y, h, hp, max_hp, color)
-	local ratio = math.max(0, math.min(1, hp / math.max(max_hp, 1)));
-	local fill_h = h * ratio;
-	dx9.DrawBox({ x - 5, y }, { x - 2, y + h }, { 40, 40, 40 });
-	if fill_h > 0 then
-		dx9.DrawFilledBox({ x - 4, y + h - fill_h }, { x - 3, y + h }, color);
-	end
-end
-
+local RAINBOW = { {255,0,0},{255,127,0},{255,255,0},{0,255,0},{0,0,255},{75,0,130},{148,0,211} };
 local CHAM_PARTS = { "Head", "UpperTorso", "LowerTorso", "Torso" };
-local partSizes = {
-	["Head"] = { x = 1.1, y = 1.1, z = 1.1 };
-	["Torso"] = { x = 2, y = 2, z = 1 };
-	["UpperTorso"] = { x = 2, y = 2, z = 1 };
-	["LowerTorso"] = { x = 2, y = 1.5, z = 1 };
-};
+local CHAM_SZ = { Head = {1.1,1.1,1.1}, Torso = {2,2,1}, UpperTorso = {2,2,1}, LowerTorso = {2,1.5,1} };
+local WEAPONS = { AK47=1,M4A1=1,M4A4=1,AWP=1,DesertEagle=1,Scout=1,SG=1,M249=1,Glock=1,USP=1,P250=1,FiveSeven=1,Tec9=1,MP7=1,P90=1,Deagle=1 };
+local NADES = { ["Smoke Grenade"]=1, ["HE Grenade"]=1, ["Flashbang"]=1, ["Molotov"]=1 };
 
-local WEAPON_NAMES = {
-	AK47 = true, M4A1 = true, M4A4 = true, AWP = true, DesertEagle = true,
-	Scout = true, SG = true, M249 = true, Glock = true, USP = true,
-	P250 = true, FiveSeven = true, Tec9 = true, MP7 = true, P90 = true, Deagle = true,
-};
-local GRENADE_NAMES = {
-	["Smoke Grenade"] = true, ["HE Grenade"] = true, ["Flashbang"] = true, ["Molotov"] = true,
-};
-
-local function addVec(v1, v2) return { x = v1.x + v2.x, y = v1.y + v2.y, z = v1.z + v2.z }; end
-local function scaleVec(v, s) return { x = v.x * s, y = v.y * s, z = v.z * s }; end
-
-local function draw_cham_box(position, cframe, size, color)
-	local hs = { x = size.x / 2, y = size.y / 2, z = size.z / 2 };
-	local min_x, min_y, max_x, max_y;
-	local any = false;
-	for dx = -1, 1, 2 do
-		for dy = -1, 1, 2 do
-			for dz = -1, 1, 2 do
-				local offset = addVec(
-					addVec(scaleVec(cframe.RightVector, dx * hs.x), scaleVec(cframe.UpVector, dy * hs.y)),
-					scaleVec(cframe.LookVector, dz * hs.z)
-				);
-				local w = addVec(position, offset);
-				local s = world_to_screen_loose(w.x, w.y, w.z);
-				if s then
-					any = true;
-					min_x = min_x and math.min(min_x, s.x) or s.x;
-					min_y = min_y and math.min(min_y, s.y) or s.y;
-					max_x = max_x and math.max(max_x, s.x) or s.x;
-					max_y = max_y and math.max(max_y, s.y) or s.y;
-				end
-			end
-		end
-	end
-	if any and min_x and max_x then
-		draw_box_2d(min_x, min_y, max_x, max_y, color);
-	end
+local function box2d(x1, y1, x2, y2, c)
+	dx9.DrawLine({x1,y1},{x2,y1},c); dx9.DrawLine({x2,y1},{x2,y2},c);
+	dx9.DrawLine({x2,y2},{x1,y2},c); dx9.DrawLine({x1,y2},{x1,y1},c);
 end
 
-local function sync_aimbot_settings()
-	dx9.SetAimbotValue("fov", flag_num("aimbot_fov", 90));
-	dx9.SetAimbotValue("smoothness", math.max(1, flag_num("smoothing", 15)));
-	dx9.SetAimbotValue("sensitivity", math.max(1, flag_num("aimbot_sens", 50)));
-	dx9.SetAimbotValue("range", 9999);
-	dx9.SetAimbotValue("type", 1);
+local function hp_bar(x, y, h, hp, maxhp)
+	local r = math.max(0, math.min(1, hp / math.max(maxhp, 1)));
+	dx9.DrawBox({x-5,y},{x-2,y+h},{40,40,40});
+	if r > 0 then dx9.DrawFilledBox({x-4,y+h*(1-r)},{x-3,y+h},{0,255,0}); end
 end
 
-local function aimbot_smooth_sens()
-	local mode = flag_str("aimbot_mode", "normal");
-	local smooth = math.max(1, math.floor(flag_num("smoothing", 15)));
-	local sens = math.max(1, math.floor(flag_num("aimbot_sens", 50)));
-	if mode == "silent" then
-		return 1, math.max(1, sens);
-	elseif mode == "legit" then
-		return math.min(100, smooth + 25), math.max(1, math.floor(sens * 0.7));
-	end
-	return smooth, sens;
+local function rainbow()
+	local a, b = RAINBOW[S.rainbow_i], RAINBOW[(S.rainbow_i % #RAINBOW) + 1];
+	local t = S.rainbow_t;
+	return { a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, a[3]+(b[3]-a[3])*t };
 end
 
-local function camera_aim_at(x, y)
-	local smooth, sens = aimbot_smooth_sens();
-	dx9.FirstPersonAim({ math.floor(x), math.floor(y) }, smooth, sens);
-end
-
-local function run_aimbot()
-	if menu_open() then return; end
-	if not flag_on("aimbot_enabled") then return; end
-	if not keybind_held("aimbot_key", "MBUTTON") then return; end
-	if flag_on("only_rmb") and not dx9.isRightClickHeld() then return; end
-
-	sync_aimbot_settings();
-
-	local cx, cy = screen_center();
-	local fov_limit = fov_pixels();
-	local best, best_dist;
-
-	for _, entry in ipairs(get_player_entries_cached()) do
-		local screen = get_aim_screen(entry);
-		if screen then
-			local d = math.sqrt((screen.x - cx) ^ 2 + (screen.y - cy) ^ 2);
-			if d <= fov_limit and (not best_dist or d < best_dist) then
-				best = screen;
-				best_dist = d;
-			end
-		end
-	end
-
-	if not best then
-		local locked = dx9.GetLocked();
-		if valid_pointer(locked) then
-			local pos = get_position(locked);
-			if pos then
-				best = world_to_screen_loose(pos.x, pos.y, pos.z);
-			end
-		end
-	end
-
-	if best then
-		camera_aim_at(best.x, best.y);
-	end
-end
-
-local function run_rcs()
-	if menu_open() then
-		S.rcs_x = 0;
-		S.rcs_y = 0;
-		return;
-	end
-	if not flag_on("rcs_enabled") or not dx9.isLeftClickHeld() then
-		S.rcs_x = 0;
-		S.rcs_y = 0;
-		return;
-	end
-
-	local cx, cy = screen_center();
-	local h = flag_num("rcs_h", 80) * 0.012;
-	local v = flag_num("rcs_v", 80) * 0.028;
-	S.rcs_x = S.rcs_x + h * 0.12;
-	S.rcs_y = S.rcs_y + v;
-	dx9.FirstPersonAim({ math.floor(cx + S.rcs_x), math.floor(cy + S.rcs_y) }, 1, 100);
+local function cham_box(p, cf, sz, c)
+	local hx, hy, hz = sz[1]/2, sz[2]/2, sz[3]/2;
+	local mnX, mnY, mxX, mxY, any;
+	for dx = -1, 1, 2 do for dy = -1, 1, 2 do for dz = -1, 1, 2 do
+		local ox = cf.RightVector.x*dx*hx + cf.UpVector.x*dy*hy + cf.LookVector.x*dz*hz;
+		local oy = cf.RightVector.y*dx*hx + cf.UpVector.y*dy*hy + cf.LookVector.y*dz*hz;
+		local oz = cf.RightVector.z*dx*hx + cf.UpVector.z*dy*hy + cf.LookVector.z*dz*hz;
+		local s = w2s(p.x+ox, p.y+oy, p.z+oz);
+		if s then any = true; mnX = mnX and math.min(mnX,s.x) or s.x; mnY = mnY and math.min(mnY,s.y) or s.y;
+			mxX = mxX and math.max(mxX,s.x) or s.x; mxY = mxY and math.max(mxY,s.y) or s.y; end
+	end end end
+	if any then box2d(mnX, mnY, mxX, mxY, c); end
 end
 
 local function run_triggerbot()
-	if menu_open() then return; end
-	if not flag_on("triggerbot_enabled") then return; end
-	if not keybind_held("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1") then return; end
-	if dx9.isLeftClickHeld() then return; end
-
-	local delay = flag_num("triggerbot_delay", 50) / 1000;
-	if S.triggerbot_last and (os.clock() - S.triggerbot_last) < delay then return; end
-
-	local cx, cy = screen_center();
-	local radius = flag_num("triggerbot_radius", 14);
-	local hit = false;
-
-	for _, entry in ipairs(get_player_entries_cached()) do
-		local screen = get_aim_screen(entry);
-		if not screen and entry.head_pos then
-			screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y, entry.head_pos.z);
+	if menu_open() or not on("triggerbot_enabled") or not bind_held("triggerbot_key", TRIG_KEY) or dx9.isLeftClickHeld() then return; end
+	local now = os.clock();
+	if now - S.trig_last < num("triggerbot_delay", 40) * 0.001 then return; end
+	if valid(dx9.GetLocked()) then dx9.Mouse1Click(); S.trig_last = now; return; end
+	local cx, cy = scr_center();
+	local r2 = num("triggerbot_radius", 14) ^ 2;
+	for _, e in ipairs(get_players()) do
+		local s = e.head_scr;
+		if s then
+			local dx, dy = s.x - cx, s.y - cy;
+			if dx * dx + dy * dy <= r2 then dx9.Mouse1Click(); S.trig_last = now; return; end
 		end
-		if screen then
-			local d = math.sqrt((screen.x - cx) ^ 2 + (screen.y - cy) ^ 2);
-			if d <= radius then
-				hit = true;
-				break;
-			end
-		end
-	end
-
-	if not hit then
-		local locked = dx9.GetLocked();
-		if valid_pointer(locked) then hit = true; end
-	end
-
-	if hit then
-		dx9.Mouse1Click();
-		S.triggerbot_last = os.clock();
 	end
 end
 
 local function draw_crosshair()
-	if not flag_on("crosshair_enabled") or menu_open() then return; end
-
-	local cx, cy = screen_center();
-	local size = flag_num("crosshair_size", 8);
-	local gap = flag_num("crosshair_gap", 4);
-	local col = rgb("crosshair");
-	local style = flag_str("crosshair_style", "gap cross");
-
-	if style == "dot" then
-		dx9.DrawCircle({ cx, cy }, col, math.max(2, math.floor(size / 3)));
-	elseif style == "circle" then
-		local prev;
-		for seg = 0, 24 do
-			local a = (2 * math.pi / 24) * seg;
-			local pt = { cx + size * math.cos(a), cy + size * math.sin(a) };
-			if prev then dx9.DrawLine(prev, pt, col); end
-			prev = pt;
-		end
-	elseif style == "cross" then
-		dx9.DrawLine({ cx - size, cy }, { cx + size, cy }, col);
-		dx9.DrawLine({ cx, cy - size }, { cx, cy + size }, col);
+	if not on("crosshair_enabled") or menu_open() then return; end
+	local cx, cy = scr_center();
+	local sz, gap, c = num("crosshair_size", 8), num("crosshair_gap", 4), rgb("crosshair");
+	local st = str("crosshair_style", "gap cross");
+	if st == "dot" then dx9.DrawCircle({cx,cy}, c, math.max(2, math.floor(sz/3)));
+	elseif st == "circle" then
+		local prev; for i = 0, 16 do local a = i/16*6.283; local pt = {cx+sz*math.cos(a), cy+sz*math.sin(a)};
+			if prev then dx9.DrawLine(prev, pt, c); end prev = pt; end
+	elseif st == "cross" then
+		dx9.DrawLine({cx-sz,cy},{cx+sz,cy},c); dx9.DrawLine({cx,cy-sz},{cx,cy+sz},c);
 	else
-		dx9.DrawLine({ cx - size, cy }, { cx - gap, cy }, col);
-		dx9.DrawLine({ cx + gap, cy }, { cx + size, cy }, col);
-		dx9.DrawLine({ cx, cy - size }, { cx, cy - gap }, col);
-		dx9.DrawLine({ cx, cy + gap }, { cx, cy + size }, col);
+		dx9.DrawLine({cx-sz,cy},{cx-gap,cy},c); dx9.DrawLine({cx+gap,cy},{cx+sz,cy},c);
+		dx9.DrawLine({cx,cy-sz},{cx,cy-gap},c); dx9.DrawLine({cx,cy+gap},{cx,cy+sz},c);
 	end
 end
 
 local function draw_keybind_hud()
-	if not flag_on("keybind_hud") then return; end
-
-	sync_keybind_name("aimbot_key", "MBUTTON");
-	sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1");
-
-	local menu_key = format_bind_key(parse_toggle_key(config.settings.menu_toggle_keybind));
-	local aim_key = S.keybind_labels.aimbot_key or "?";
-	local trig_key = S.keybind_labels.triggerbot_key or "?";
-
+	if not on("keybind_hud") then return; end
+	sync_bind("triggerbot_key", TRIG_KEY);
 	local rows = {};
-	if flag_on("aimbot_enabled") then
-		rows[#rows + 1] = { "AIMBOT", keybind_held("aimbot_key", "MBUTTON"), aim_key };
-	end
-	if flag_on("triggerbot_enabled") then
-		rows[#rows + 1] = { "TRIGGER", keybind_held("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1"), trig_key };
-	end
-	if flag_on("rcs_enabled") then
-		rows[#rows + 1] = { "RCS", dx9.isLeftClickHeld(), "LMB" };
-	end
-	if flag_on("esp_enabled") and flag_on("player_esp_enabled") then
-		rows[#rows + 1] = { "ESP", true, nil };
-	end
-	if flag_on("radar_enabled") then
-		rows[#rows + 1] = { "RADAR", true, nil };
-	end
-	if flag_on("bomb_timer") then
-		rows[#rows + 1] = { "BOMB TIMER", true, nil };
-	end
-	rows[#rows + 1] = { "MENU", menu_open(), menu_key };
-
-	local header_h = 18;
-	local row_h = 16;
-	local pad = 8;
-	local w = 150;
-	for _, row in ipairs(rows) do
-		local text = row[1];
-		if row[3] then text = text .. BIND_SEP .. row[3]; end
-		w = math.max(w, dx9.CalcTextWidth(text) + 28);
-	end
-	local h = header_h + pad + (#rows * row_h);
-
-	local sw = dx9.size().width;
-	local sh = dx9.size().height;
-	if S.kb_hud_x == nil then
-		S.kb_hud_x = 12;
-		S.kb_hud_y = sh - h - 12;
-	end
-
-	local x = math.floor(S.kb_hud_x);
-	local y = math.floor(S.kb_hud_y);
-	x, y = handle_panel_drag("kb_hud_x", "kb_hud_y", "kb_hud_drag", x, y, w, header_h);
-
-	S.kb_hud_x = math.max(0, math.min(sw - w, S.kb_hud_x));
-	S.kb_hud_y = math.max(0, math.min(sh - h, S.kb_hud_y));
-	x = math.floor(S.kb_hud_x);
-	y = math.floor(S.kb_hud_y);
-
-	dx9.DrawFilledBox({ x, y }, { x + w, y + h }, { 12, 12, 14 });
-	dx9.DrawFilledBox({ x, y }, { x + w, y + header_h }, { 18, 18, 22 });
-	dx9.DrawFilledBox({ x, y + header_h - 1 }, { x + w, y + header_h }, { 121, 96, 180 });
-	dx9.DrawBox({ x, y }, { x + w, y + h }, { 38, 38, 44 });
-	dx9.DrawString({ x + 8, y + 4 }, { 200, 200, 210 }, "KEYBINDS");
-
-	for i, row in ipairs(rows) do
-		local label, active, bind = row[1], row[2], row[3];
-		local line = bind and (label .. BIND_SEP .. bind) or label;
-		local ly = y + header_h + 4 + (i - 1) * row_h;
-		local dot = active and { 80, 220, 120 } or { 120, 120, 120 };
-		dx9.DrawCircle({ x + 10, ly + 5 }, dot, 2);
-		dx9.DrawString({ x + 18, ly + 1 }, { 210, 210, 215 }, line);
-	end
-end
-
-local function draw_fov_circle()
-	if not flag_on("fov_circle") then return; end
-	if menu_open() then return; end
-
-	local cx, cy = screen_center();
-	local radius = fov_pixels();
-	local col = { 121, 96, 180 };
-	local segments = 48;
-	local prev;
-	for i = 0, segments do
-		local a = (2 * math.pi / segments) * i;
-		local x = cx + radius * math.cos(a);
-		local y = cy + radius * math.sin(a);
-		local pt = { x, y };
-		if prev then dx9.DrawLine(prev, pt, col); end
-		prev = pt;
-	end
-end
-
-local function draw_snaplines()
-	if not flag_on("snaplines") or not flag_on("esp_enabled") then return; end
-
-	local cx, cy = screen_center();
-	local col = rgb("player_esp");
-	for _, entry in ipairs(get_player_entries_cached()) do
-		local screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y, entry.head_pos.z);
-		if screen then
-			dx9.DrawLine({ cx, cy }, { screen.x, screen.y }, col);
-		end
+	if on("triggerbot_enabled") then rows[#rows+1] = { "TRIGGER", bind_held("triggerbot_key", TRIG_KEY), S.keybind_labels.triggerbot_key or "M4" }; end
+	if on("esp_enabled") and on("player_esp_enabled") then rows[#rows+1] = { "ESP", true }; end
+	if on("radar_enabled") then rows[#rows+1] = { "RADAR", true }; end
+	if on("bomb_timer") then rows[#rows+1] = { "BOMB TIMER", true }; end
+	rows[#rows+1] = { "MENU", menu_open(), bind_label(parse_key(config.settings.menu_toggle_keybind)) };
+	local hh, rh, pad, w = 18, 16, 8, 150;
+	for _, r in ipairs(rows) do w = math.max(w, dx9.CalcTextWidth(r[3] and (r[1]..BIND_SEP..r[3]) or r[1]) + 28); end
+	local h = hh + pad + #rows * rh;
+	local sw, sh = dx9.size().width, dx9.size().height;
+	if not S.kb_hud_x then S.kb_hud_x, S.kb_hud_y = 12, sh - h - 12; end
+	local x, y = panel_drag("kb_hud_x", "kb_hud_y", "kb_hud_drag", math.floor(S.kb_hud_x), math.floor(S.kb_hud_y), w, hh);
+	S.kb_hud_x = math.max(0, math.min(sw - w, S.kb_hud_x)); S.kb_hud_y = math.max(0, math.min(sh - h, S.kb_hud_y));
+	x, y = math.floor(S.kb_hud_x), math.floor(S.kb_hud_y);
+	dx9.DrawFilledBox({x,y},{x+w,y+h},{12,12,14}); dx9.DrawFilledBox({x,y},{x+w,y+hh},{18,18,22});
+	dx9.DrawFilledBox({x,y+hh-1},{x+w,y+hh},{121,96,180}); dx9.DrawBox({x,y},{x+w,y+h},{38,38,44});
+	dx9.DrawString({x+8,y+4},{200,200,210},"KEYBINDS");
+	for i, r in ipairs(rows) do
+		local ly = y + hh + 4 + (i-1)*rh;
+		local dot = r[2] and {80,220,120} or {120,120,120};
+		local line = r[3] and (r[1]..BIND_SEP..r[3]) or r[1];
+		dx9.DrawCircle({x+10, ly+5}, dot, 2); dx9.DrawString({x+18, ly+1},{210,210,215}, line);
 	end
 end
 
 local function draw_radar()
-	if not flag_on("radar_enabled") or not flag_on("esp_enabled") then return; end
-	if not cache.local_pos then return; end
-
-	local sw = dx9.size().width;
-	local sh = dx9.size().height;
-	local size = 118;
-	local header = 18;
-	local accent = { 121, 96, 180 };
-	local bg = { 12, 12, 14 };
-	local border = { 38, 38, 44 };
-
-	if S.radar_x == nil then
-		S.radar_x = sw - size - 14;
-		S.radar_y = 34;
+	if not on("radar_enabled") or not on("esp_enabled") or not cache.local_pos then return; end
+	local sw, sh, size, hh = dx9.size().width, dx9.size().height, 118, 18;
+	if not S.radar_x then S.radar_x, S.radar_y = sw - size - 14, 34; end
+	local rx, ry = panel_drag("radar_x", "radar_y", "radar_drag", math.floor(S.radar_x), math.floor(S.radar_y), size, hh);
+	S.radar_x = math.max(0, math.min(sw-size, S.radar_x)); S.radar_y = math.max(0, math.min(sh-size, S.radar_y));
+	rx, ry = math.floor(S.radar_x), math.floor(S.radar_y);
+	local my, mh = ry + hh, size - hh;
+	local cx, cy, scale = rx + size/2, my + mh/2, mh / 130;
+	dx9.DrawFilledBox({rx,ry},{rx+size,ry+size},{12,12,14}); dx9.DrawFilledBox({rx,ry},{rx+size,ry+hh},{18,18,22});
+	dx9.DrawFilledBox({rx,ry+hh-1},{rx+size,ry+hh},{121,96,180}); dx9.DrawBox({rx,ry},{rx+size,ry+size},{38,38,44});
+	dx9.DrawString({rx+8,ry+4},{200,200,210},"RADAR");
+	dx9.DrawLine({rx+1,cy},{rx+size-1,cy},{55,55,62}); dx9.DrawLine({cx,my+1},{cx,ry+size-1},{55,55,62});
+	local ring = mh/2 - 6;
+	for _, e in ipairs(get_players()) do
+		local dx = (e.root.x - cache.local_pos.x) * scale;
+		local dz = (e.root.z - cache.local_pos.z) * scale;
+		local d = math.sqrt(dx*dx + dz*dz);
+		if d > ring - 2 and d > 0 then dx, dz = dx/d*(ring-2), dz/d*(ring-2); end
+		dx9.DrawCircle({cx+dx, cy+dz}, e.mate and {72,168,255} or {255,72,72}, 3);
 	end
-
-	local rx = math.floor(S.radar_x);
-	local ry = math.floor(S.radar_y);
-	rx, ry = handle_panel_drag("radar_x", "radar_y", "radar_drag", rx, ry, size, header);
-
-	S.radar_x = math.max(0, math.min(sw - size, S.radar_x));
-	S.radar_y = math.max(0, math.min(sh - size, S.radar_y));
-	rx = math.floor(S.radar_x);
-	ry = math.floor(S.radar_y);
-	local map_y = ry + header;
-	local map_h = size - header;
-	local cx = rx + size / 2;
-	local cy = map_y + map_h / 2;
-	local scale = map_h / 130;
-
-	dx9.DrawFilledBox({ rx, ry }, { rx + size, ry + size }, bg);
-	dx9.DrawFilledBox({ rx, ry }, { rx + size, ry + header }, { 18, 18, 22 });
-	dx9.DrawFilledBox({ rx, ry + header - 1 }, { rx + size, ry + header }, accent);
-	dx9.DrawBox({ rx, ry }, { rx + size, ry + size }, border);
-	dx9.DrawString({ rx + 8, ry + 4 }, { 200, 200, 210 }, "RADAR");
-
-	local grid = { 55, 55, 62 };
-	dx9.DrawLine({ rx + 1, cy }, { rx + size - 1, cy }, grid);
-	dx9.DrawLine({ cx, map_y + 1 }, { cx, ry + size - 1 }, grid);
-	local ring_r = map_h / 2 - 6;
-	for i = 1, 2 do
-		local r = ring_r * (i / 2);
-		local prev;
-		for seg = 0, 24 do
-			local a = (2 * math.pi / 24) * seg;
-			local pt = { cx + r * math.cos(a), cy + r * math.sin(a) };
-			if prev then dx9.DrawLine(prev, pt, { 42, 42, 50 }); end
-			prev = pt;
-		end
-	end
-
-	for _, entry in ipairs(get_player_entries_cached()) do
-		local dx = (entry.root_pos.x - cache.local_pos.x) * scale;
-		local dz = (entry.root_pos.z - cache.local_pos.z) * scale;
-		local dist = math.sqrt(dx * dx + dz * dz);
-		local max_r = ring_r - 2;
-		if dist > max_r and dist > 0 then
-			dx = dx / dist * max_r;
-			dz = dz / dist * max_r;
-		end
-		local px = cx + dx;
-		local py = cy + dz;
-		local dot = entry.is_teammate and { 72, 168, 255 } or { 255, 72, 72 };
-		dx9.DrawCircle({ px, py }, dot, 3);
-	end
-
-	dx9.DrawCircle({ cx, cy }, accent, 2);
+	dx9.DrawCircle({cx,cy},{121,96,180},2);
 end
 
 local function draw_bomb_timer()
-	if not flag_on("bomb_timer") then
-		S.bomb_t0 = nil;
-		return;
-	end
-
-	local planted = get_planted_bomb();
-	if not planted then
-		S.bomb_t0 = nil;
-		return;
-	end
-
-	if not S.bomb_t0 then
-		S.bomb_t0 = os.clock();
-	end
-
-	local remaining = math.max(0, 40 - (os.clock() - S.bomb_t0));
-	if remaining <= 0 then return; end
-
-	local label = string.format("BOMB  %.2f", remaining);
-	local color;
-	if remaining > 10 then
-		color = { 80, 220, 80 };
-	elseif remaining > 5 then
-		color = { 255, 200, 0 };
-	else
-		color = { 255, 60, 60 };
-	end
-
-	local sw = dx9.size().width;
-	local sh = dx9.size().height;
-	local tw = dx9.CalcTextWidth(label);
-	local ww = tw + 24;
-	local wh = 22;
-
-	if S.bomb_x == nil then
-		S.bomb_x = sw / 2 - ww / 2;
-		S.bomb_y = 30;
-	end
-
-	local wx = math.floor(S.bomb_x);
-	local wy = math.floor(S.bomb_y);
-	wx, wy = handle_panel_drag("bomb_x", "bomb_y", "bomb_drag", wx, wy, ww, wh);
-
-	S.bomb_x = math.max(0, math.min(sw - ww, S.bomb_x));
-	S.bomb_y = math.max(0, math.min(sh - wh, S.bomb_y));
-	wx = math.floor(S.bomb_x);
-	wy = math.floor(S.bomb_y);
-
-	dx9.DrawFilledBox({ wx, wy }, { wx + ww, wy + wh }, { 15, 15, 15 });
-	dx9.DrawBox({ wx, wy }, { wx + ww, wy + wh }, { 45, 45, 45 });
-	dx9.DrawFilledBox({ wx, wy }, { wx + ww, wy + 2 }, color);
-	dx9.DrawString({ wx + 12, wy + 5 }, { 230, 230, 230 }, label);
-
-	local bar_w = ww - 4;
-	local fill = bar_w * (remaining / 40);
-	if fill > 0 then
-		dx9.DrawFilledBox({ wx + 2, wy + wh - 3 }, { wx + 2 + fill, wy + wh - 1 }, color);
-	end
+	if not on("bomb_timer") then S.bomb_t0 = nil; return; end
+	if not planted_bomb() then S.bomb_t0 = nil; return; end
+	S.bomb_t0 = S.bomb_t0 or os.clock();
+	local rem = 40 - (os.clock() - S.bomb_t0);
+	if rem <= 0 then return; end
+	local label = string.format("BOMB  %.2f", rem);
+	local col = rem > 10 and {80,220,80} or (rem > 5 and {255,200,0} or {255,60,60});
+	local sw, sh = dx9.size().width, dx9.size().height;
+	local ww, wh = dx9.CalcTextWidth(label) + 24, 22;
+	if not S.bomb_x then S.bomb_x, S.bomb_y = sw/2 - ww/2, 30; end
+	local wx, wy = panel_drag("bomb_x", "bomb_y", "bomb_drag", math.floor(S.bomb_x), math.floor(S.bomb_y), ww, wh);
+	S.bomb_x = math.max(0, math.min(sw-ww, S.bomb_x)); S.bomb_y = math.max(0, math.min(sh-wh, S.bomb_y));
+	wx, wy = math.floor(S.bomb_x), math.floor(S.bomb_y);
+	dx9.DrawFilledBox({wx,wy},{wx+ww,wy+wh},{15,15,15}); dx9.DrawBox({wx,wy},{wx+ww,wy+wh},{45,45,45});
+	dx9.DrawFilledBox({wx,wy},{wx+ww,wy+2},col); dx9.DrawString({wx+12,wy+5},{230,230,230},label);
+	local fill = (ww-4) * (rem/40);
+	if fill > 0 then dx9.DrawFilledBox({wx+2,wy+wh-3},{wx+2+fill,wy+wh-1},col); end
 end
 
-local function run_player_esp()
-	if not flag_on("esp_enabled") or not flag_on("player_esp_enabled") then return; end
-
-	local color = rgb("player_esp");
-	local draw_boxes = flag_on("player_boxes");
-	local draw_hp = flag_on("player_hp");
-	local draw_names = flag_on("player_names");
-
-	for _, entry in ipairs(get_player_entries_cached()) do
-		local top = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y + 0.5, entry.head_pos.z);
-		local bottom = world_to_screen_loose(entry.root_pos.x, entry.root_pos.y - 2.5, entry.root_pos.z);
-		if top and bottom then
-			local h = math.abs(bottom.y - top.y);
-			local w = h * 0.55;
-			local x1, x2 = top.x - w / 2, top.x + w / 2;
-			local y1, y2 = top.y, bottom.y;
-
-			if draw_boxes then draw_box_2d(x1, y1, x2, y2, color); end
-
-			if draw_hp and valid_pointer(entry.humanoid) then
-				local hp = dx9.GetHealth(entry.humanoid);
-				local max_hp = dx9.GetMaxHealth(entry.humanoid);
-				if hp and max_hp then draw_health_bar(x1, y1, h, hp, max_hp, { 0, 255, 0 }); end
+local function draw_player_esp()
+	if not on("esp_enabled") or not on("player_esp_enabled") then return; end
+	local c, boxes, hp_on, names = rgb("player_esp"), on("player_boxes"), on("player_hp"), on("player_names");
+	for _, e in ipairs(get_players()) do
+		local top = w2s(e.head.x, e.head.y + 0.5, e.head.z);
+		local bot = w2s(e.root.x, e.root.y - 2.5, e.root.z);
+		if top and bot then
+			local h = math.abs(bot.y - top.y); local w = h * 0.55;
+			local x1, x2, y1, y2 = top.x - w/2, top.x + w/2, top.y, bot.y;
+			if boxes then box2d(x1, y1, x2, y2, c); end
+			if hp_on and valid(e.humanoid) then
+				local hp, mx = dx9.GetHealth(e.humanoid), dx9.GetMaxHealth(e.humanoid);
+				if hp and mx then hp_bar(x1, y1, h, hp, mx); end
 			end
-
-			if draw_names and entry.name then
-				local label = entry.name;
-				if flag_on("player_distance") and entry.distance then
-					label = label .. " [" .. math.floor(entry.distance) .. "st]";
-				end
-				dx9.DrawString({ top.x - dx9.CalcTextWidth(label) / 2, y1 - 14 }, color, label);
+			if names and e.name then
+				local lbl = e.name;
+				if on("player_distance") then lbl = lbl .. " [" .. math.floor(e.dist) .. "st]"; end
+				dx9.DrawString({top.x - dx9.CalcTextWidth(lbl)/2, y1-14}, c, lbl);
 			end
 		end
 	end
 end
 
-local function run_chinahat()
-	if not flag_on("esp_enabled") or not flag_on("chinahat_enabled") then return; end
-
-	for _, entry in ipairs(get_player_entries_cached()) do
-		local screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y + 0.85, entry.head_pos.z);
-		if screen then
-			local col = flag_on("chinahat_rainbow") and rainbow_color() or rgb("chinahat");
-			local dist = entry.distance > 0 and entry.distance or 50;
-			local scale = math.max(0.3, math.min(2, 50 / dist));
-			local radius = 28 * scale;
-			local top = { screen.x, screen.y - 18 * scale };
-			local seg = 8;
-			for i = 0, seg - 1 do
-				local a1 = (2 * math.pi / seg) * i;
-				local a2 = (2 * math.pi / seg) * (i + 1);
-				local p1 = { screen.x + radius * math.cos(a1), screen.y + radius * math.sin(a1) * 0.45 };
-				local p2 = { screen.x + radius * math.cos(a2), screen.y + radius * math.sin(a2) * 0.45 };
-				dx9.DrawLine(p1, p2, col);
-				dx9.DrawLine(p1, top, col);
+local function draw_chinahat()
+	if not on("esp_enabled") or not on("chinahat_enabled") then return; end
+	for _, e in ipairs(get_players()) do
+		local s = w2s(e.head.x, e.head.y + 0.85, e.head.z);
+		if s then
+			local col = on("chinahat_rainbow") and rainbow() or rgb("chinahat");
+			local sc = math.max(0.3, math.min(2, 50 / math.max(e.dist, 1)));
+			local r, top = 28*sc, {s.x, s.y - 18*sc};
+			for i = 0, 7 do
+				local a1, a2 = i/8*6.283, (i+1)/8*6.283;
+				local p1 = {s.x+r*math.cos(a1), s.y+r*math.sin(a1)*0.45};
+				local p2 = {s.x+r*math.cos(a2), s.y+r*math.sin(a2)*0.45};
+				dx9.DrawLine(p1, p2, col); dx9.DrawLine(p1, top, col);
 			end
 		end
 	end
-
-	if flag_on("chinahat_rainbow") then
+	if on("chinahat_rainbow") then
 		S.rainbow_fc = S.rainbow_fc + 1;
 		if S.rainbow_fc % 4 == 0 then
 			S.rainbow_t = S.rainbow_t + 0.06;
-			if S.rainbow_t >= 1 then
-				S.rainbow_t = 0;
-				S.rainbow_i = S.rainbow_i + 1;
-				if S.rainbow_i > #rainbowColors then S.rainbow_i = 1; end
+			if S.rainbow_t >= 1 then S.rainbow_t = 0; S.rainbow_i = S.rainbow_i % #RAINBOW + 1; end
+		end
+	end
+end
+
+local function draw_chams()
+	if not on("esp_enabled") or not on("chams_enabled") or cache.frame % 2 ~= 0 then return; end
+	for _, e in ipairs(get_players()) do
+		local col = e.mate and rgb("chams_team") or rgb("chams_enemy");
+		for _, pn in ipairs(CHAM_PARTS) do
+			local part = dx9.FindFirstChild(e.character, pn);
+			local sz = CHAM_SZ[pn];
+			if valid(part) and sz then
+				local p, cf = pos(part), cframe(part);
+				if p and cf then cham_box(p, cf, sz, col); end
 			end
 		end
 	end
 end
 
-local function run_chams()
-	if not flag_on("esp_enabled") or not flag_on("chams_enabled") then return; end
-	if cache.frame % 2 ~= 0 then return; end
-
-	for _, entry in ipairs(get_player_entries_cached()) do
-		local col = entry.is_teammate and rgb("chams_team") or rgb("chams_enemy");
-		for _, part_name in ipairs(CHAM_PARTS) do
-			local part = dx9.FindFirstChild(entry.character, part_name);
-			if valid_pointer(part) and partSizes[part_name] then
-				local pos = get_position(part);
-				local cf = get_cframe(part);
-				if pos and cf then draw_cham_box(pos, cf, partSizes[part_name], col); end
-			end
+local function draw_bomb_esp()
+	if not on("esp_enabled") or not on("bombs_enabled") then return; end
+	local c = rgb("bombs");
+	local drop = cache.debris and dx9.FindFirstChild(cache.debris, "C4");
+	local plant = cache.workspace and dx9.FindFirstChild(cache.workspace, "C4");
+	if valid(drop) then
+		local p = pos(drop);
+		local s = p and w2s(p.x, p.y, p.z);
+		if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("C4") / 2, s.y }, c, "C4"); end
+	end
+	if valid(plant) then
+		local h = dx9.FindFirstChild(plant, "Handle");
+		if valid(h) then
+			local p = pos(h);
+			local s = p and w2s(p.x, p.y, p.z);
+			if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("Planted C4") / 2, s.y }, c, "Planted C4"); end
 		end
 	end
 end
 
-local function run_bomb_esp()
-	if not flag_on("esp_enabled") or not flag_on("bombs_enabled") or not cache.workspace then return; end
-
-	local color = rgb("bombs");
-	local dropped = cache.debris and dx9.FindFirstChild(cache.debris, "C4") or nil;
-	local planted = dx9.FindFirstChild(cache.workspace, "C4");
-
-	if valid_pointer(dropped) then
-		local pos = get_position(dropped);
-		local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-		if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("C4") / 2, s.y }, color, "C4"); end
-	end
-	if valid_pointer(planted) then
-		local handle = dx9.FindFirstChild(planted, "Handle");
-		if valid_pointer(handle) then
-			local pos = get_position(handle);
-			local s = pos and world_to_screen_loose(pos.x, pos.y, pos.z);
-			if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("Planted C4") / 2, s.y }, color, "Planted C4"); end
-		end
-	end
-end
-
-local function scan_world_items()
-	if cache.frame % 2 ~= 0 then return; end
-	if not flag_on("esp_enabled") then return; end
-	if not flag_on("weapons_enabled") and not flag_on("grenades_enabled") and not flag_on("midair_grenades_enabled") then
-		return;
-	end
-
+local function scan_items()
+	local f = cache.frame;
+	if f % 2 ~= 0 or not on("esp_enabled") then return; end
 	local items = S.items;
-	items.weapons = {};
-	items.grenades = {};
-	items.midair = {};
+	local scan_w = on("weapons_enabled") or on("grenades_enabled") or on("midair_grenades_enabled");
+	local scan_r = on("smoke_radius_enabled") or on("mol_radius_enabled");
+	if not scan_w and not scan_r then return; end
 
-	if not cache.debris then return; end
-
-	for _, item in next, dx9.GetChildren(cache.debris) do
-		if valid_pointer(dx9.FindFirstChild(item, "Ammo"))
-			and valid_pointer(dx9.FindFirstChild(item, "StoredAmmo"))
-			and valid_pointer(dx9.FindFirstChild(item, "Mag")) then
-			local name = dx9.GetName(item);
-			if WEAPON_NAMES[name] then
-				local mag = dx9.FindFirstChild(item, "Mag");
-				local pos = get_position(mag);
-				if pos then
-					local text = name;
-					if flag_on("weapons_show_ammo") then
-						local ammo = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
-						if ammo then text = name .. " [" .. tostring(ammo) .. "]"; end
+	if scan_w then
+		items.weapons, items.grenades, items.midair = {}, {}, {};
+		if cache.debris then
+			for _, item in next, dx9.GetChildren(cache.debris) do
+				if valid(dx9.FindFirstChild(item,"Ammo")) and valid(dx9.FindFirstChild(item,"StoredAmmo")) and valid(dx9.FindFirstChild(item,"Mag")) then
+					local n = dx9.GetName(item);
+					if WEAPONS[n] then
+						local mp = pos(dx9.FindFirstChild(item, "Mag"));
+						if mp then
+							local txt = n;
+							if on("weapons_show_ammo") then local a = dx9.GetIntValue(dx9.FindFirstChild(item,"Ammo")); if a then txt = n.." ["..a.."]"; end end
+							items.weapons[#items.weapons+1] = { pos = mp, text = txt };
+						end
 					end
-					items.weapons[#items.weapons + 1] = { pos = pos; text = text; };
-				end
-			end
-		elseif dx9.GetType(item) == "MeshPart" then
-			local n = dx9.GetName(item);
-			if GRENADE_NAMES[n] then
-				local pos = get_position(item);
-				if pos then
-					items.grenades[#items.grenades + 1] = { pos = pos; label = n; };
-				end
-			elseif n == "Model" then
-				local pos = get_position(item);
-				if pos then
-					items.midair[#items.midair + 1] = { pos = pos; };
+				elseif dx9.GetType(item) == "MeshPart" then
+					local n = dx9.GetName(item); local ip = pos(item);
+					if ip and NADES[n] then items.grenades[#items.grenades+1] = { pos = ip, label = n };
+					elseif ip and n == "Model" then items.midair[#items.midair+1] = { pos = ip }; end
 				end
 			end
 		end
 	end
+
+	if scan_r and f % 3 == 0 and cache.ray_ignore then
+		items.smokes, items.fires = {}, {};
+		local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
+		if smokes then for _, s in next, dx9.GetChildren(smokes) do
+			if dx9.GetName(s) == "Smoke" then local p = pos(s); if p then items.smokes[#items.smokes+1] = { pos = p }; end end
+		end end
+		local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
+		if fires then for _, fire in next, dx9.GetChildren(fires) do
+			if dx9.GetName(fire) == "Fire" then local p = pos(fire); if p then items.fires[#items.fires+1] = { pos = p }; end end
+		end end
+	end
 end
 
-local function scan_radius_items()
-	if cache.frame % 3 ~= 0 then return; end
-	if not flag_on("esp_enabled") then return; end
-	if not flag_on("smoke_radius_enabled") and not flag_on("mol_radius_enabled") then return; end
+local function draw_item_text(list, col, field)
+	for _, e in ipairs(list) do
+		local s = w2s(e.pos.x, e.pos.y, e.pos.z);
+		if s then local t = e[field]; dx9.DrawString({s.x - dx9.CalcTextWidth(t)/2, s.y}, col, t); end
+	end
+end
 
-	local items = S.items;
-	items.smokes = {};
-	items.fires = {};
-
-	if not cache.ray_ignore then return; end
-
-	local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
-	if smokes then
-		for _, smoke in next, dx9.GetChildren(smokes) do
-			if dx9.GetName(smoke) == "Smoke" then
-				local pos = get_position(smoke);
-				if pos then items.smokes[#items.smokes + 1] = { pos = pos; }; end
+local function draw_items_esp()
+	if not on("esp_enabled") then return; end
+	if on("weapons_enabled") then draw_item_text(S.items.weapons, rgb("weapons"), "text"); end
+	if on("grenades_enabled") then draw_item_text(S.items.grenades, rgb("grenades"), "label"); end
+	if on("midair_grenades_enabled") then
+		local c = rgb("midair");
+		for _, e in ipairs(S.items.midair) do local s = w2s(e.pos.x,e.pos.y,e.pos.z);
+			if s then dx9.DrawString({s.x-24,s.y},c,"GRENADE"); dx9.DrawCircle({s.x,s.y},c,6); end
+		end
+	end
+	if on("smoke_radius_enabled") then
+		local c = rgb("smoke");
+		for _, e in ipairs(S.items.smokes) do
+			local p, gy, prev = e.pos, e.pos.y - 0.5;
+			for i = 0, 12 do
+				local a = i / 12 * 6.283;
+				local pt = w2s(p.x + 10.5 * math.cos(a), gy, p.z + 10.5 * math.sin(a));
+				if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, c); end
+				if pt then prev = { pt.x, pt.y }; end
 			end
 		end
 	end
-
-	local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
-	if fires then
-		for _, fire in next, dx9.GetChildren(fires) do
-			if dx9.GetName(fire) == "Fire" then
-				local pos = get_position(fire);
-				if pos then items.fires[#items.fires + 1] = { pos = pos; }; end
-			end
-		end
-	end
-end
-
-local function draw_weapon_esp()
-	if not flag_on("esp_enabled") or not flag_on("weapons_enabled") then return; end
-
-	local color = rgb("weapons");
-	for _, entry in ipairs(S.items.weapons) do
-		local s = world_to_screen_loose(entry.pos.x, entry.pos.y, entry.pos.z);
-		if s then
-			dx9.DrawString({ s.x - dx9.CalcTextWidth(entry.text) / 2, s.y }, color, entry.text);
-		end
-	end
-end
-
-local function draw_grenade_esp()
-	if not flag_on("esp_enabled") or not flag_on("grenades_enabled") then return; end
-
-	local color = rgb("grenades");
-	for _, entry in ipairs(S.items.grenades) do
-		local s = world_to_screen_loose(entry.pos.x, entry.pos.y, entry.pos.z);
-		if s then
-			dx9.DrawString({ s.x - dx9.CalcTextWidth(entry.label) / 2, s.y }, color, entry.label);
-		end
-	end
-end
-
-local function draw_midair_esp()
-	if not flag_on("esp_enabled") or not flag_on("midair_grenades_enabled") then return; end
-
-	local color = rgb("midair");
-	for _, entry in ipairs(S.items.midair) do
-		local s = world_to_screen_loose(entry.pos.x, entry.pos.y, entry.pos.z);
-		if s then
-			dx9.DrawString({ s.x - 24, s.y }, color, "GRENADE");
-			dx9.DrawCircle({ s.x, s.y }, color, 6);
-		end
-	end
-end
-
-local function draw_smoke_radius()
-	if not flag_on("esp_enabled") or not flag_on("smoke_radius_enabled") then return; end
-
-	local color = rgb("smoke");
-	for _, entry in ipairs(S.items.smokes) do
-		local pos = entry.pos;
-		local gy = pos.y - 0.5;
-		local prev;
-		for i = 0, 16 do
-			local a = (2 * math.pi / 16) * i;
-			local pt = world_to_screen_loose(pos.x + 10.5 * math.cos(a), gy, pos.z + 10.5 * math.sin(a));
-			if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, color); end
-			if pt then prev = { pt.x, pt.y }; end
-		end
-	end
-end
-
-local function draw_molotov_radius()
-	if not flag_on("esp_enabled") or not flag_on("mol_radius_enabled") then return; end
-
-	local color = rgb("mol");
-	for _, entry in ipairs(S.items.fires) do
-		local pos = entry.pos;
-		if pos then
-			local gy = pos.y - 0.5;
-			local hs = 12;
-			local c = {
-				world_to_screen_loose(pos.x - hs, gy, pos.z - hs),
-				world_to_screen_loose(pos.x + hs, gy, pos.z - hs),
-				world_to_screen_loose(pos.x + hs, gy, pos.z + hs),
-				world_to_screen_loose(pos.x - hs, gy, pos.z + hs),
+	if on("mol_radius_enabled") then
+		local c = rgb("mol");
+		for _, e in ipairs(S.items.fires) do
+			local p, gy, hs = e.pos, e.pos.y - 0.5, 12;
+			local corners = {
+				w2s(p.x-hs,gy,p.z-hs), w2s(p.x+hs,gy,p.z-hs), w2s(p.x+hs,gy,p.z+hs), w2s(p.x-hs,gy,p.z+hs),
 			};
-			if c[1] and c[2] and c[3] and c[4] then
-				dx9.DrawLine({ c[1].x, c[1].y }, { c[2].x, c[2].y }, color);
-				dx9.DrawLine({ c[2].x, c[2].y }, { c[3].x, c[3].y }, color);
-				dx9.DrawLine({ c[3].x, c[3].y }, { c[4].x, c[4].y }, color);
-				dx9.DrawLine({ c[4].x, c[4].y }, { c[1].x, c[1].y }, color);
+			if corners[1] and corners[2] and corners[3] and corners[4] then
+				for i = 1, 4 do local a, b = corners[i], corners[i%4+1]; dx9.DrawLine({a.x,a.y},{b.x,b.y},c); end
 			end
 		end
 	end
+end
+
+local function draw_snaplines()
+	if not on("snaplines") or not on("esp_enabled") then return; end
+	local cx, cy, c = scr_center(); c = rgb("player_esp");
+	for _, e in ipairs(get_players()) do if e.head_scr then dx9.DrawLine({cx,cy},{e.head_scr.x,e.head_scr.y},c); end end
 end
 
 pcall(function()
 	refresh_cache();
-
 	if not menu_open() then
-		scan_world_items();
-		scan_radius_items();
-		run_rcs();
-		run_aimbot();
+		scan_items();
 		run_triggerbot();
-		run_player_esp();
-		run_chinahat();
-		run_chams();
-		run_bomb_esp();
-		draw_weapon_esp();
-		draw_grenade_esp();
-		draw_midair_esp();
-		draw_smoke_radius();
-		draw_molotov_radius();
-		draw_fov_circle();
+		draw_player_esp();
+		draw_chinahat();
+		draw_chams();
+		draw_bomb_esp();
+		draw_items_esp();
 		draw_crosshair();
 		draw_snaplines();
 	end
-
 	draw_radar();
 	draw_bomb_timer();
 	draw_keybind_hud();
