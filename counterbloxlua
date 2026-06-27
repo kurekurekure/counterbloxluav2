@@ -1,4 +1,4 @@
--- CounterBlox UI v3.5 | dx9ware | By kure | @anticurve
+-- CounterBlox UI v3.6 | dx9ware | By kure | @anticurve
 -- GitHub main script (counterbloxlua). Executed every frame by loader.lua.
 -- Bump BUILD + loader SCRIPT_VERSION together when you push updates.
 
@@ -26,7 +26,7 @@ config = _G.counterblox_config or {
 		triggerbot_enabled = false;
 		triggerbot_delay = 50;
 		triggerbot_radius = 14;
-		triggerbot_key = "CTRL";
+		triggerbot_key = "XBUTTON1";
 	};
 	world = {
 		no_fog = false;
@@ -122,6 +122,8 @@ if S == nil then
 		cache = {
 			frame = 0;
 			players = {};
+			player_entries = nil;
+			player_entries_tick = -1;
 			local_pos = nil;
 			local_team = nil;
 			local_player = nil;
@@ -144,6 +146,7 @@ S.keybind_labels = S.keybind_labels or {};
 S.keybind_names = S.keybind_names or {};
 S.profiles = S.profiles or {};
 local cache = S.cache;
+cache.player_entries_tick = cache.player_entries_tick or -1;
 
 -- Load / refresh seraph9 every frame (cached fetch). Re-running it refreshes
 -- input (key/mouse) which the menu's Render closure reads.
@@ -191,12 +194,23 @@ local function rgb(prefix)
 	};
 end
 
+local BIND_ALIASES = {
+	MB4 = "XBUTTON1";
+	M4 = "XBUTTON1";
+	MOUSE4 = "XBUTTON1";
+	MB5 = "XBUTTON2";
+	M5 = "XBUTTON2";
+	MOUSE5 = "XBUTTON2";
+};
+
 local KEY_DISPLAY = {
 	MBUTTON = "M3";
 	RBUTTON = "M2";
 	LBUTTON = "M1";
 	XBUTTON1 = "M4";
 	XBUTTON2 = "M5";
+	MB4 = "M4";
+	MB5 = "M5";
 	LCONTROL = "CTRL";
 	RCONTROL = "CTRL";
 	CONTROL = "CTRL";
@@ -223,6 +237,10 @@ local KEY_HELD_CODES = {
 	LBUTTON = { "[LBUTTON]" };
 	XBUTTON1 = { "[XBUTTON1]" };
 	XBUTTON2 = { "[XBUTTON2]" };
+	MB4 = { "[XBUTTON1]" };
+	MB5 = { "[XBUTTON2]" };
+	M4 = { "[XBUTTON1]" };
+	M5 = { "[XBUTTON2]" };
 };
 
 local function normalize_bind_name(name)
@@ -233,61 +251,62 @@ local function normalize_bind_name(name)
 	return name;
 end
 
+local function resolve_bind_name(name)
+	name = normalize_bind_name(name);
+	if name == "" then return ""; end
+	return BIND_ALIASES[name] or name;
+end
+
 local function format_bind_key(key)
-	key = normalize_bind_name(key);
+	key = resolve_bind_name(key);
 	if key == "" then return "?"; end
 	return KEY_DISPLAY[key] or key;
 end
 
-local function dx9_key_down(code)
-	if dx9.GetKey() == code then return true; end
-	local keys = dx9.GetKeys();
-	if type(keys) == "table" then
-		for _, k in ipairs(keys) do
-			if k == code then return true; end
-		end
-	end
-	return false;
+local function dx9_key_current(code)
+	return dx9.GetKey() == code;
 end
 
 local function sync_keybind_name(flag, fallback)
 	S.keybind_names = S.keybind_names or {};
 	local v = library.flags[flag];
 	if type(v) == "string" and v ~= "" then
-		S.keybind_names[flag] = normalize_bind_name(v);
+		S.keybind_names[flag] = resolve_bind_name(v);
 	end
 	for _, alt_key in ipairs({ flag .. "_bind", flag .. "bind", flag .. "_key" }) do
 		local alt = library.flags[alt_key];
 		if type(alt) == "string" and alt ~= "" then
-			S.keybind_names[flag] = normalize_bind_name(alt);
+			S.keybind_names[flag] = resolve_bind_name(alt);
 		end
 	end
 	if _G._sr and type(_G._sr.binds) == "table" and type(_G._sr.binds[flag]) == "string" then
-		S.keybind_names[flag] = normalize_bind_name(_G._sr.binds[flag]);
+		S.keybind_names[flag] = resolve_bind_name(_G._sr.binds[flag]);
 	end
 	if not S.keybind_names[flag] or S.keybind_names[flag] == "" then
-		S.keybind_names[flag] = normalize_bind_name(fallback);
+		S.keybind_names[flag] = resolve_bind_name(fallback);
 	end
 	S.keybind_labels[flag] = format_bind_key(S.keybind_names[flag]);
 	return S.keybind_labels[flag];
 end
 
 local function keybind_held(flag, fallback)
-	if flag_on(flag) then return true; end
+	if library.flags[flag] == true then return true; end
 
-	local name = sync_keybind_name(flag, fallback);
+	local name = resolve_bind_name(sync_keybind_name(flag, fallback));
 	local codes = KEY_HELD_CODES[name];
 	if codes then
 		for _, code in ipairs(codes) do
-			if dx9_key_down(code) then return true; end
+			if dx9_key_current(code) then return true; end
 		end
 	end
 
-	if dx9_key_down("[" .. name .. "]") then return true; end
+	if dx9_key_current("[" .. name .. "]") then return true; end
 
 	if name == "RBUTTON" or name == "M2" then return dx9.isRightClickHeld(); end
 	if name == "LBUTTON" or name == "M1" then return dx9.isLeftClickHeld(); end
-	if name == "MBUTTON" or name == "M3" then return dx9_key_down("[MBUTTON]"); end
+	if name == "MBUTTON" or name == "M3" then return dx9_key_current("[MBUTTON]"); end
+	if name == "XBUTTON1" or name == "MB4" or name == "M4" then return dx9_key_current("[XBUTTON1]"); end
+	if name == "XBUTTON2" or name == "MB5" or name == "M5" then return dx9_key_current("[XBUTTON2]"); end
 
 	return false;
 end
@@ -295,7 +314,7 @@ end
 local function on_keybind_set(flag, value)
 	S.keybind_names = S.keybind_names or {};
 	if type(value) == "string" and value ~= "" then
-		S.keybind_names[flag] = normalize_bind_name(value);
+		S.keybind_names[flag] = resolve_bind_name(value);
 		S.keybind_labels[flag] = format_bind_key(value);
 	end
 end
@@ -350,7 +369,7 @@ local function valid_pointer(ptr)
 	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
 end
 
-local BUILD = "3.5";
+local BUILD = "3.6";
 local BIND_SEP = " | ";
 
 local function menu_open()
@@ -448,8 +467,17 @@ local function should_skip_player(player_inst, is_teammate)
 	return false;
 end
 
+local function refresh_local_pos()
+	local info = dx9.get_localplayer();
+	if info and info.Position then
+		cache.local_pos = info.Position;
+	end
+end
+
 local function refresh_cache()
 	cache.frame = cache.frame + 1;
+	refresh_local_pos();
+
 	if cache.frame % 8 ~= 0 and cache.datamodel then return; end
 
 	cache.datamodel = dx9.GetDatamodel();
@@ -534,6 +562,14 @@ local function get_player_entries()
 	return entries;
 end
 
+local function get_player_entries_cached()
+	if cache.player_entries_tick ~= cache.frame then
+		cache.player_entries = get_player_entries();
+		cache.player_entries_tick = cache.frame;
+	end
+	return cache.player_entries or {};
+end
+
 ----------------------------------------------------------------------
 -- UI (rebuilt every frame; seraph stores state in _G._sr)
 ----------------------------------------------------------------------
@@ -586,7 +622,7 @@ s_trigger:toggle({
 	callback = function(v) notify("triggerbot " .. (v and "on" or "off")); end;
 });
 s_trigger:keybind({
-	name = "hold key"; flag = "triggerbot_key"; default = config.combat.triggerbot_key or "CTRL";
+	name = "hold key"; flag = "triggerbot_key"; default = config.combat.triggerbot_key or "XBUTTON1";
 	callback = function(v) on_keybind_set("triggerbot_key", v); end;
 });
 s_trigger:slider({ name = "delay"; flag = "triggerbot_delay"; min = 0; max = 300; default = config.combat.triggerbot_delay or 50; interval = 5; suffix = " ms"; tip = "Min time between shots."; });
@@ -723,7 +759,7 @@ s_reset:button({
 });
 
 sync_keybind_name("aimbot_key", "MBUTTON");
-sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "CTRL");
+sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1");
 
 if not S.greeted then
 	S.greeted = true;
@@ -851,7 +887,7 @@ local function run_aimbot()
 	local fov_limit = fov_pixels();
 	local best, best_dist;
 
-	for _, entry in ipairs(get_player_entries()) do
+	for _, entry in ipairs(get_player_entries_cached()) do
 		local screen = get_aim_screen(entry);
 		if screen then
 			local d = math.sqrt((screen.x - cx) ^ 2 + (screen.y - cy) ^ 2);
@@ -900,7 +936,7 @@ end
 local function run_triggerbot()
 	if menu_open() then return; end
 	if not flag_on("triggerbot_enabled") then return; end
-	if not keybind_held("triggerbot_key", config.combat.triggerbot_key or "CTRL") then return; end
+	if not keybind_held("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1") then return; end
 	if dx9.isLeftClickHeld() then return; end
 
 	local delay = flag_num("triggerbot_delay", 50) / 1000;
@@ -910,7 +946,7 @@ local function run_triggerbot()
 	local radius = flag_num("triggerbot_radius", 14);
 	local hit = false;
 
-	for _, entry in ipairs(get_player_entries()) do
+	for _, entry in ipairs(get_player_entries_cached()) do
 		local screen = get_aim_screen(entry);
 		if not screen and entry.head_pos then
 			screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y, entry.head_pos.z);
@@ -969,7 +1005,7 @@ local function draw_keybind_hud()
 	if not flag_on("keybind_hud") then return; end
 
 	sync_keybind_name("aimbot_key", "MBUTTON");
-	sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "CTRL");
+	sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1");
 
 	local menu_key = format_bind_key(parse_toggle_key(config.settings.menu_toggle_keybind));
 	local aim_key = S.keybind_labels.aimbot_key or "?";
@@ -980,7 +1016,7 @@ local function draw_keybind_hud()
 		rows[#rows + 1] = { "AIMBOT", keybind_held("aimbot_key", "MBUTTON"), aim_key };
 	end
 	if flag_on("triggerbot_enabled") then
-		rows[#rows + 1] = { "TRIGGER", keybind_held("triggerbot_key", config.combat.triggerbot_key or "CTRL"), trig_key };
+		rows[#rows + 1] = { "TRIGGER", keybind_held("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1"), trig_key };
 	end
 	if flag_on("rcs_enabled") then
 		rows[#rows + 1] = { "RCS", dx9.isLeftClickHeld(), "LMB" };
@@ -1063,7 +1099,7 @@ local function draw_snaplines()
 
 	local cx, cy = screen_center();
 	local col = rgb("player_esp");
-	for _, entry in ipairs(get_player_entries()) do
+	for _, entry in ipairs(get_player_entries_cached()) do
 		local screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y, entry.head_pos.z);
 		if screen then
 			dx9.DrawLine({ cx, cy }, { screen.x, screen.y }, col);
@@ -1123,7 +1159,7 @@ local function draw_radar()
 		end
 	end
 
-	for _, entry in ipairs(get_player_entries()) do
+	for _, entry in ipairs(get_player_entries_cached()) do
 		local dx = (entry.root_pos.x - cache.local_pos.x) * scale;
 		local dz = (entry.root_pos.z - cache.local_pos.z) * scale;
 		local dist = math.sqrt(dx * dx + dz * dz);
@@ -1210,7 +1246,7 @@ local function run_player_esp()
 	local draw_hp = flag_on("player_hp");
 	local draw_names = flag_on("player_names");
 
-	for _, entry in ipairs(get_player_entries()) do
+	for _, entry in ipairs(get_player_entries_cached()) do
 		local top = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y + 0.5, entry.head_pos.z);
 		local bottom = world_to_screen_loose(entry.root_pos.x, entry.root_pos.y - 2.5, entry.root_pos.z);
 		if top and bottom then
@@ -1241,7 +1277,7 @@ end
 local function run_chinahat()
 	if not flag_on("esp_enabled") or not flag_on("chinahat_enabled") then return; end
 
-	for _, entry in ipairs(get_player_entries()) do
+	for _, entry in ipairs(get_player_entries_cached()) do
 		local screen = world_to_screen_loose(entry.head_pos.x, entry.head_pos.y + 0.85, entry.head_pos.z);
 		if screen then
 			local col = flag_on("chinahat_rainbow") and rainbow_color() or rgb("chinahat");
@@ -1278,7 +1314,7 @@ local function run_chams()
 	if not flag_on("esp_enabled") or not flag_on("chams_enabled") then return; end
 	if cache.frame % 2 ~= 0 then return; end
 
-	for _, entry in ipairs(get_player_entries()) do
+	for _, entry in ipairs(get_player_entries_cached()) do
 		local col = entry.is_teammate and rgb("chams_team") or rgb("chams_enemy");
 		for _, part_name in ipairs(CHAM_PARTS) do
 			local part = dx9.FindFirstChild(entry.character, part_name);
@@ -1317,6 +1353,12 @@ end
 -- World item scan (throttled) + draw (every frame — prevents strobe)
 ----------------------------------------------------------------------
 local function scan_world_items()
+	if cache.frame % 2 ~= 0 then return; end
+	if not flag_on("esp_enabled") then return; end
+	if not flag_on("weapons_enabled") and not flag_on("grenades_enabled") and not flag_on("midair_grenades_enabled") then
+		return;
+	end
+
 	local items = S.items;
 	items.weapons = {};
 	items.grenades = {};
@@ -1359,6 +1401,10 @@ local function scan_world_items()
 end
 
 local function scan_radius_items()
+	if cache.frame % 3 ~= 0 then return; end
+	if not flag_on("esp_enabled") then return; end
+	if not flag_on("smoke_radius_enabled") and not flag_on("mol_radius_enabled") then return; end
+
 	local items = S.items;
 	items.smokes = {};
 	items.fires = {};
@@ -1466,10 +1512,19 @@ local function draw_molotov_radius()
 end
 
 ----------------------------------------------------------------------
--- Frame: ESP wrapped in pcall so a draw error never blocks the menu.
+-- Frame: process menu input first, then ESP (pcall so errors never block UI).
 ----------------------------------------------------------------------
+window:Render();
+
 pcall(function()
 	refresh_cache();
+
+	local menu_up = menu_open();
+	if menu_up then
+		draw_keybind_hud();
+		return;
+	end
+
 	scan_world_items();
 	scan_radius_items();
 	run_rcs();
