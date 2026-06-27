@@ -1,6 +1,6 @@
 -- CounterBlox UI | GitHub script (counterbloxlua) — do NOT paste into dx9ware; loader.lua runs this.
 
-local BUILD = "4.3";
+local BUILD = "4.4";
 local BIND_SEP = " | ";
 local TRIG_KEY = "XBUTTON1";
 local M_PER_STUD = 0.28;
@@ -19,10 +19,10 @@ local DEFAULTS = {
 		chams_enabled = false; chams_enemy_color = { 255, 0, 0 }; chams_team_color = { 0, 255, 0 };
 	};
 	items = {
-		bombs_enabled = true; bomb_timer = true; bombs_color = { 255, 255, 0 };
+		bombs_enabled = true; bomb_timer = true; bombs_color = { 255, 255, 0 }; bombs_max_dist = 80;
 		weapons_enabled = true; weapons_color = { 0, 255, 255 }; weapons_show_ammo = true; weapons_max_dist = 50;
-		grenades_enabled = true; grenades_color = { 255, 0, 255 };
-		midair_grenades_enabled = true; midair_grenades_color = { 255, 128, 0 };
+		grenades_enabled = true; grenades_color = { 255, 0, 255 }; grenades_max_dist = 50;
+		midair_grenades_enabled = true; midair_grenades_color = { 255, 128, 0 }; midair_max_dist = 80;
 		smoke_radius_enabled = true; smoke_radius_color = { 0, 255, 0 };
 		molotov_radius_enabled = true; molotov_radius_color = { 255, 165, 0 };
 	};
@@ -57,7 +57,7 @@ if not S then
 		keybind_names = {}; keybind_labels = {}; profiles = {}; default_flags = nil;
 		cache = {
 			frame = 0; players = {}; player_entries = nil; player_entries_tick = -1;
-			local_pos = nil; local_team = nil; local_player = nil;
+			local_pos = nil; local_team = nil; local_player = nil; local_yaw = 0;
 			datamodel = nil; workspace = nil; debris = nil; ray_ignore = nil;
 		};
 	};
@@ -279,9 +279,28 @@ local function refresh_cache()
 		if rp and cache.local_pos and dist3(rp, cache.local_pos) < 2 then
 			cache.local_team = dx9.GetTeam(p);
 			cache.local_player = p;
+			local cf = root and cframe(root);
+			if cf and cf.LookVector then
+				cache.local_yaw = math.atan2(cf.LookVector.x, cf.LookVector.z);
+			end
 			break;
 		end
 	end
+end
+
+local function refresh_local_yaw()
+	if not cache.local_player then return; end
+	local char = dx9.GetCharacter(cache.local_player);
+	local root = char and dx9.FindFirstChild(char, "HumanoidRootPart");
+	local cf = root and cframe(root);
+	if cf and cf.LookVector then
+		cache.local_yaw = math.atan2(cf.LookVector.x, cf.LookVector.z);
+	end
+end
+
+local function in_range(p, flag, default_m)
+	if not cache.local_pos or not p then return true; end
+	return dist3(p, cache.local_pos) <= m_to_studs(num(flag, default_m));
 end
 
 local function get_players()
@@ -371,9 +390,11 @@ local cil, cir = tab_items:column(), tab_items:column();
 local s_bombs = cil:section({ name = "bombs" });
 s_bombs:toggle({ name = "bomb esp", flag = "bombs_enabled", default = config.items.bombs_enabled });
 s_bombs:toggle({ name = "bomb timer", flag = "bomb_timer", default = config.items.bomb_timer ~= false });
+s_bombs:slider({ name = "max dist", flag = "bombs_max_dist", min = 5, max = 200, default = config.items.bombs_max_dist or 80, interval = 5, suffix = " m" });
 add_rgb(s_bombs, "bombs", "bomb", config.items.bombs_color);
 local s_gren = cil:section({ name = "grenades" });
 s_gren:toggle({ name = "dropped", flag = "grenades_enabled", default = config.items.grenades_enabled });
+s_gren:slider({ name = "max dist", flag = "grenades_max_dist", min = 5, max = 200, default = config.items.grenades_max_dist or 50, interval = 5, suffix = " m" });
 add_rgb(s_gren, "grenades", "nade", config.items.grenades_color);
 local s_rad = cil:section({ name = "radius" });
 s_rad:toggle({ name = "smoke", flag = "smoke_radius_enabled", default = config.items.smoke_radius_enabled });
@@ -387,12 +408,25 @@ s_wep:slider({ name = "max dist", flag = "weapons_max_dist", min = 5, max = 200,
 add_rgb(s_wep, "weapons", "weapon", config.items.weapons_color);
 local s_mid = cir:section({ name = "midair" });
 s_mid:toggle({ name = "midair nades", flag = "midair_grenades_enabled", default = config.items.midair_grenades_enabled });
+s_mid:slider({ name = "max dist", flag = "midair_max_dist", min = 5, max = 200, default = config.items.midair_max_dist or 80, interval = 5, suffix = " m" });
 add_rgb(s_mid, "midair", "midair", config.items.midair_grenades_color);
 
 local cc1, cc2 = tab_config:column(), tab_config:column();
 local s_cfg = cc1:section({ name = "config" });
 s_cfg:toggle({ name = "watermark", flag = "watermark", default = config.settings.watermark_enabled ~= false });
-s_cfg:slider({ name = "overlay fps", flag = "overlay_fps_limit", min = 30, max = 1000, default = config.settings.overlay_fps_limit or 144, interval = 10, suffix = " fps" });
+s_cfg:slider({
+	name = "overlay fps"; flag = "overlay_fps_limit"; min = 30; max = 1000;
+	default = config.settings.overlay_fps_limit or 144; interval = 10; suffix = " fps";
+	callback = function(v)
+		if type(v) == "number" and v < 120 then
+			notify("Keep overlay fps at or above your Roblox FPS");
+		end
+	end;
+});
+s_cfg:button({
+	name = "fps tip";
+	callback = function() notify("Overlay fps should match or exceed your Roblox FPS cap"); end;
+});
 local s_prof = cc2:section({ name = "profiles" });
 for i = 1, 3 do
 	s_prof:button({ name = "save " .. i, callback = function() S.profiles[i] = snap_flags(); notify("profile " .. i .. " saved"); end });
@@ -426,6 +460,7 @@ local CHAM_SZ = { Head = {1.1,1.1,1.1}, Torso = {2,2,1}, UpperTorso = {2,2,1}, L
 local WEAPONS = {
 	AK47 = 1, M4A1 = 1, M4A4 = 1, M4A1S = 1, ["M4A1-S"] = 1, AWP = 1, DesertEagle = 1, Deagle = 1,
 	Scout = 1, SG = 1, M249 = 1, Glock = 1, USP = 1, P250 = 1, FiveSeven = 1, Tec9 = 1, MP7 = 1, P90 = 1,
+	Thompson = 1, MP9 = 1, UMP = 1, Bizon = 1, MAC10 = 1, Galil = 1, Famas = 1, Aug = 1, SG553 = 1,
 };
 local NADE_NAMES = {
 	["HE Grenade"] = 1, ["Smoke Grenade"] = 1, ["Flashbang"] = 1, ["Molotov"] = 1,
@@ -438,38 +473,36 @@ local function is_weapon_drop(item)
 		and valid(dx9.FindFirstChild(item, "Mag"));
 end
 
-local function item_pos(item)
-	local p = pos(item);
-	if p then return p; end
-	local h = dx9.FindFirstChild(item, "Handle") or dx9.FindFirstChild(item, "Handle2");
-	return h and pos(h);
-end
-
-local function classify_grenade(item)
-	local n = dx9.GetName(item);
+local function nade_label_from_name(n)
 	if NADE_NAMES[n] then return n; end
-
 	local lower = n:lower();
+	if lower == "grenade" then return nil; end
 	if lower:find("he") and lower:find("grenade") then return "HE Grenade"; end
 	if lower:find("smoke") then return "Smoke Grenade"; end
 	if lower:find("flash") then return "Flashbang"; end
 	if lower:find("incendiary") then return "Incendiary Grenade"; end
 	if lower:find("molotov") then return "Molotov"; end
 	if lower:find("decoy") then return "Decoy Grenade"; end
+end
 
-	if valid(dx9.FindFirstChild(item, "Handle2")) and not is_weapon_drop(item) then
-		return "Grenade";
-	end
+local function classify_grenade(item)
+	if is_weapon_drop(item) then return; end
+	local n = dx9.GetName(item);
+	if WEAPONS[n] then return; end
+	local label = nade_label_from_name(n);
+	if not label then return; end
+	if dx9.GetType(item) ~= "MeshPart" then return; end
+	if not valid(dx9.FindFirstChild(item, "Handle2")) then return; end
+	return label;
 end
 
 local function try_add_grenade(item, out)
-	if is_weapon_drop(item) or WEAPONS[dx9.GetName(item)] then return; end
-	local typ = dx9.GetType(item);
-	if typ ~= "MeshPart" and typ ~= "Part" and typ ~= "Model" then return; end
 	local label = classify_grenade(item);
 	if not label then return; end
-	local ip = item_pos(item);
-	if ip then out[#out + 1] = { pos = ip, label = label }; end
+	local ip = pos(item);
+	if ip and in_range(ip, "grenades_max_dist", config.items.grenades_max_dist or 50) then
+		out[#out + 1] = { pos = ip, label = label };
+	end
 end
 
 local function box2d(x1, y1, x2, y2, c)
@@ -566,6 +599,7 @@ end
 
 local function draw_radar()
 	if not on("radar_enabled") or not on("esp_enabled") or not cache.local_pos then return; end
+	refresh_local_yaw();
 	local sw, sh, size, hh = dx9.size().width, dx9.size().height, 118, 18;
 	if not S.radar_x then S.radar_x, S.radar_y = sw - size - 14, 34; end
 	local rx, ry = panel_drag("radar_x", "radar_y", "radar_drag", math.floor(S.radar_x), math.floor(S.radar_y), size, hh);
@@ -573,14 +607,19 @@ local function draw_radar()
 	rx, ry = math.floor(S.radar_x), math.floor(S.radar_y);
 	local my, mh = ry + hh, size - hh;
 	local cx, cy, scale = rx + size/2, my + mh/2, mh / 130;
+	local cos_y, sin_y = math.cos(-cache.local_yaw), math.sin(-cache.local_yaw);
 	dx9.DrawFilledBox({rx,ry},{rx+size,ry+size},{12,12,14}); dx9.DrawFilledBox({rx,ry},{rx+size,ry+hh},{18,18,22});
 	dx9.DrawFilledBox({rx,ry+hh-1},{rx+size,ry+hh},{121,96,180}); dx9.DrawBox({rx,ry},{rx+size,ry+size},{38,38,44});
 	dx9.DrawString({rx+8,ry+4},{200,200,210},"RADAR");
 	dx9.DrawLine({rx+1,cy},{rx+size-1,cy},{55,55,62}); dx9.DrawLine({cx,my+1},{cx,ry+size-1},{55,55,62});
 	local ring = mh/2 - 6;
+	dx9.DrawLine({cx,cy},{cx,cy-ring+4},{121,96,180});
 	for _, e in ipairs(get_players()) do
-		local dx = (e.root.x - cache.local_pos.x) * scale;
-		local dz = (e.root.z - cache.local_pos.z) * scale;
+		local rdx = e.root.x - cache.local_pos.x;
+		local rdz = e.root.z - cache.local_pos.z;
+		local rot_x = rdx * cos_y - rdz * sin_y;
+		local rot_z = rdx * sin_y + rdz * cos_y;
+		local dx, dz = rot_x * scale, -rot_z * scale;
 		local d = math.sqrt(dx*dx + dz*dz);
 		if d > ring - 2 and d > 0 then dx, dz = dx/d*(ring-2), dz/d*(ring-2); end
 		dx9.DrawCircle({cx+dx, cy+dz}, e.mate and {72,168,255} or {255,72,72}, 3);
@@ -696,15 +735,19 @@ local function draw_bomb_esp()
 	local plant = cache.workspace and dx9.FindFirstChild(cache.workspace, "C4");
 	if valid(drop) then
 		local p = pos(drop);
-		local s = p and w2s(p.x, p.y, p.z);
-		if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("C4") / 2, s.y }, c, "C4"); end
+		if p and in_range(p, "bombs_max_dist", config.items.bombs_max_dist or 80) then
+			local s = w2s(p.x, p.y, p.z);
+			if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("C4") / 2, s.y }, c, "C4"); end
+		end
 	end
 	if valid(plant) then
 		local h = dx9.FindFirstChild(plant, "Handle");
 		if valid(h) then
 			local p = pos(h);
-			local s = p and w2s(p.x, p.y, p.z);
-			if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("Planted C4") / 2, s.y }, c, "Planted C4"); end
+			if p and in_range(p, "bombs_max_dist", config.items.bombs_max_dist or 80) then
+				local s = w2s(p.x, p.y, p.z);
+				if s then dx9.DrawString({ s.x - dx9.CalcTextWidth("Planted C4") / 2, s.y }, c, "Planted C4"); end
+			end
 		end
 	end
 end
@@ -717,27 +760,29 @@ local function scan_world_items()
 	items.weapons, items.grenades, items.midair = {}, {}, {};
 	if not cache.debris then return; end
 
-	local max_wep = m_to_studs(num("weapons_max_dist", config.items.weapons_max_dist or 50));
 	for _, item in next, dx9.GetChildren(cache.debris) do
 		if is_weapon_drop(item) then
 			local n = dx9.GetName(item);
-			if WEAPONS[n] then
-				local mp = pos(dx9.FindFirstChild(item, "Mag"));
-				if mp and (not cache.local_pos or dist3(mp, cache.local_pos) <= max_wep) then
-					local txt = n;
-					if on("weapons_show_ammo") then
-						local a = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
-						if a then txt = n .. " [" .. a .. "]"; end
-					end
-					items.weapons[#items.weapons + 1] = { pos = mp, text = txt };
+			local mp = pos(dx9.FindFirstChild(item, "Mag"));
+			if mp and in_range(mp, "weapons_max_dist", config.items.weapons_max_dist or 50) then
+				local txt = n;
+				if on("weapons_show_ammo") then
+					local a = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
+					if a then txt = n .. " [" .. a .. "]"; end
 				end
+				items.weapons[#items.weapons + 1] = { pos = mp, text = txt };
 			end
 		elseif on("grenades_enabled") then
 			try_add_grenade(item, items.grenades);
 		end
-		if on("midair_grenades_enabled") and dx9.GetType(item) == "MeshPart" and dx9.GetName(item) == "Model" then
-			local ip = pos(item);
-			if ip then items.midair[#items.midair + 1] = { pos = ip }; end
+		if on("midair_grenades_enabled") and dx9.GetType(item) == "MeshPart" then
+			local n = dx9.GetName(item);
+			if n == "Model" or n == "grenade" then
+				local ip = pos(item);
+				if ip and in_range(ip, "midair_max_dist", config.items.midair_max_dist or 80) then
+					items.midair[#items.midair + 1] = { pos = ip };
+				end
+			end
 		end
 	end
 end
@@ -758,7 +803,7 @@ local function scan_radius_items()
 	if smokes and on("smoke_radius_enabled") then
 		for _, s in next, dx9.GetChildren(smokes) do
 			if dx9.GetName(s) == "Smoke" then
-				local p = item_pos(s);
+				local p = pos(s);
 				if p then items.smokes[#items.smokes + 1] = { pos = p }; end
 			end
 		end
@@ -768,17 +813,8 @@ local function scan_radius_items()
 		local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
 		if fires then
 			for _, fire in next, dx9.GetChildren(fires) do
-				local p = item_pos(fire);
-				if p then items.fires[#items.fires + 1] = { pos = p }; end
-			end
-		end
-		for _, child in next, dx9.GetChildren(cache.ray_ignore) do
-			local cn = dx9.GetName(child):lower();
-			if cn:find("fire") or cn:find("molotov") or cn:find("incendiary") then
-				local p = item_pos(child);
-				if p then items.fires[#items.fires + 1] = { pos = p }; end
-				for _, sub in next, dx9.GetChildren(child) do
-					p = item_pos(sub);
+				if dx9.GetName(fire) == "Fire" then
+					local p = pos(fire);
 					if p then items.fires[#items.fires + 1] = { pos = p }; end
 				end
 			end
@@ -818,12 +854,12 @@ local function draw_items_esp()
 	if on("mol_radius_enabled") then
 		local c = rgb("mol");
 		for _, e in ipairs(S.items.fires) do
-			local p, gy, hs = e.pos, e.pos.y - 0.5, 12;
-			local corners = {
-				w2s(p.x-hs,gy,p.z-hs), w2s(p.x+hs,gy,p.z-hs), w2s(p.x+hs,gy,p.z+hs), w2s(p.x-hs,gy,p.z+hs),
-			};
-			if corners[1] and corners[2] and corners[3] and corners[4] then
-				for i = 1, 4 do local a, b = corners[i], corners[i%4+1]; dx9.DrawLine({a.x,a.y},{b.x,b.y},c); end
+			local p, gy, prev = e.pos, e.pos.y - 0.5;
+			for i = 0, 12 do
+				local a = i / 12 * 6.283;
+				local pt = w2s(p.x + 12 * math.cos(a), gy, p.z + 12 * math.sin(a));
+				if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, c); end
+				if pt then prev = { pt.x, pt.y }; end
 			end
 		end
 	end
