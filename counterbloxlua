@@ -1,6 +1,4 @@
--- CounterBlox UI v3.6 | dx9ware | By kure | @anticurve
--- GitHub main script (counterbloxlua). Executed every frame by loader.lua.
--- Bump BUILD + loader SCRIPT_VERSION together when you push updates.
+-- CounterBlox UI | loader runs this every frame
 
 config = _G.counterblox_config or {
 	urls = {
@@ -28,10 +26,7 @@ config = _G.counterblox_config or {
 		triggerbot_radius = 14;
 		triggerbot_key = "XBUTTON1";
 	};
-	world = {
-		no_fog = false;
-		fog_end = 100000;
-	};
+	world = {};
 	players = {
 		teamcheck_enabled = true;
 		player_esp_enabled = true;
@@ -87,7 +82,7 @@ config.players = config.players or {};
 config.items = config.items or {};
 config.hud = config.hud or {};
 
--- Persistent state across frames (this chunk re-runs every frame).
+-- Persistent state (survives per-frame re-run).
 local S = _G.__cb_state;
 if S == nil then
 	S = {
@@ -148,12 +143,8 @@ S.profiles = S.profiles or {};
 local cache = S.cache;
 cache.player_entries_tick = cache.player_entries_tick or -1;
 
--- Load / refresh seraph9 every frame (cached fetch). Re-running it refreshes
--- input (key/mouse) which the menu's Render closure reads.
 do
-	local ui_url = config.urls.UI or config.urls.DXLibUI
-		or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua";
-	local src = dx9.Get(ui_url);
+	local src = dx9.Get(config.urls.UI or "https://raw.githubusercontent.com/x8n8x/srp/refs/heads/main/seraph9.lua");
 	if type(src) == "string" and src ~= "" then
 		local chunk = loadstring(src);
 		if chunk then chunk(); end
@@ -161,7 +152,6 @@ do
 end
 
 if type(library) ~= "table" or type(library.Window) ~= "function" then
-	-- UI failed to load (bad fetch). Show console so the error is visible.
 	dx9.ShowConsole(true);
 	return;
 end
@@ -272,17 +262,7 @@ local function sync_keybind_name(flag, fallback)
 	local v = library.flags[flag];
 	if type(v) == "string" and v ~= "" then
 		S.keybind_names[flag] = resolve_bind_name(v);
-	end
-	for _, alt_key in ipairs({ flag .. "_bind", flag .. "bind", flag .. "_key" }) do
-		local alt = library.flags[alt_key];
-		if type(alt) == "string" and alt ~= "" then
-			S.keybind_names[flag] = resolve_bind_name(alt);
-		end
-	end
-	if _G._sr and type(_G._sr.binds) == "table" and type(_G._sr.binds[flag]) == "string" then
-		S.keybind_names[flag] = resolve_bind_name(_G._sr.binds[flag]);
-	end
-	if not S.keybind_names[flag] or S.keybind_names[flag] == "" then
+	elseif not S.keybind_names[flag] then
 		S.keybind_names[flag] = resolve_bind_name(fallback);
 	end
 	S.keybind_labels[flag] = format_bind_key(S.keybind_names[flag]);
@@ -291,7 +271,6 @@ end
 
 local function keybind_held(flag, fallback)
 	if library.flags[flag] == true then return true; end
-
 	local name = resolve_bind_name(sync_keybind_name(flag, fallback));
 	local codes = KEY_HELD_CODES[name];
 	if codes then
@@ -369,7 +348,7 @@ local function valid_pointer(ptr)
 	return ptr ~= nil and ptr ~= 0 and ptr ~= false;
 end
 
-local BUILD = "3.6";
+local BUILD = "3.7";
 local BIND_SEP = " | ";
 
 local function menu_open()
@@ -570,16 +549,13 @@ local function get_player_entries_cached()
 	return cache.player_entries or {};
 end
 
-----------------------------------------------------------------------
--- UI (rebuilt every frame; seraph stores state in _G._sr)
-----------------------------------------------------------------------
 local function parse_toggle_key(keybind)
 	if type(keybind) ~= "string" then return "F2"; end
 	return keybind:match("%[(.-)%]") or keybind;
 end
 
 local window = library:Window({
-	name = "CounterBlox UI | dx9ware | By kure | @anticurve";
+	name = "CounterBlox UI";
 	toggle_key = parse_toggle_key(config.settings.menu_toggle_keybind);
 });
 
@@ -594,52 +570,34 @@ local s_aim = combat_ms:get_tab("aimbot");
 local s_rcs = combat_ms:get_tab("rcs");
 local s_trigger = combat_ms:get_tab("trigger");
 
-s_aim:toggle({
-	name = "enabled"; flag = "aimbot_enabled"; default = config.combat.aimbot_enabled;
-	callback = function(v) notify("aimbot " .. (v and "on" or "off")); end;
-});
-s_aim:keybind({
-	name = "hold key"; flag = "aimbot_key"; default = "MBUTTON";
-	callback = function(v) on_keybind_set("aimbot_key", v); end;
-});
+s_aim:toggle({ name = "enabled"; flag = "aimbot_enabled"; default = config.combat.aimbot_enabled; });
+s_aim:keybind({ name = "hold key"; flag = "aimbot_key"; default = "MBUTTON"; callback = function(v) on_keybind_set("aimbot_key", v); end; });
 s_aim:dropdown({ name = "mode"; flag = "aimbot_mode"; items = { "normal", "silent", "legit" }; default = config.combat.aimbot_mode or "normal"; });
 s_aim:dropdown({ name = "aim bone"; flag = "aim_bone"; items = { "Head", "Torso", "HumanoidRootPart" }; default = config.combat.aim_bone or "Head"; });
-s_aim:toggle({ name = "only rmb"; flag = "only_rmb"; default = config.combat.only_rmb ~= false; tip = "Only aim while scoped (RMB)."; });
-s_aim:slider({ name = "smoothing"; flag = "smoothing"; min = 1; max = 100; default = config.combat.smoothing or 15; interval = 1; tip = "1 = instant, higher = smoother."; });
+s_aim:toggle({ name = "only rmb"; flag = "only_rmb"; default = config.combat.only_rmb ~= false; });
+s_aim:slider({ name = "smoothing"; flag = "smoothing"; min = 1; max = 100; default = config.combat.smoothing or 15; interval = 1; });
 s_aim:slider({ name = "sensitivity"; flag = "aimbot_sens"; min = 1; max = 100; default = config.combat.aimbot_sens or 50; interval = 1; });
 s_aim:slider({ name = "fov"; flag = "aimbot_fov"; min = 10; max = 360; default = config.combat.aimbot_fov or 90; interval = 5; suffix = " deg"; });
-s_aim:toggle({ name = "fov circle"; flag = "fov_circle"; default = config.combat.fov_circle ~= false; tip = "Draw aimbot FOV ring on screen."; });
+s_aim:toggle({ name = "fov circle"; flag = "fov_circle"; default = config.combat.fov_circle ~= false; });
 
-s_rcs:toggle({
-	name = "enabled"; flag = "rcs_enabled"; default = config.combat.rcs_enabled;
-	callback = function(v) notify("rcs " .. (v and "on" or "off")); end;
-});
+s_rcs:toggle({ name = "enabled"; flag = "rcs_enabled"; default = config.combat.rcs_enabled; });
 s_rcs:slider({ name = "horizontal"; flag = "rcs_h"; min = 0; max = 100; default = config.combat.rcs_h or 80; interval = 1; suffix = "%"; });
 s_rcs:slider({ name = "vertical"; flag = "rcs_v"; min = 0; max = 100; default = config.combat.rcs_v or 80; interval = 1; suffix = "%"; });
 
-s_trigger:toggle({
-	name = "enabled"; flag = "triggerbot_enabled"; default = config.combat.triggerbot_enabled;
-	callback = function(v) notify("triggerbot " .. (v and "on" or "off")); end;
-});
-s_trigger:keybind({
-	name = "hold key"; flag = "triggerbot_key"; default = config.combat.triggerbot_key or "XBUTTON1";
-	callback = function(v) on_keybind_set("triggerbot_key", v); end;
-});
-s_trigger:slider({ name = "delay"; flag = "triggerbot_delay"; min = 0; max = 300; default = config.combat.triggerbot_delay or 50; interval = 5; suffix = " ms"; tip = "Min time between shots."; });
-s_trigger:slider({ name = "radius"; flag = "triggerbot_radius"; min = 4; max = 40; default = config.combat.triggerbot_radius or 14; interval = 1; suffix = " px"; tip = "Crosshair proximity to enemy head."; });
+s_trigger:toggle({ name = "enabled"; flag = "triggerbot_enabled"; default = config.combat.triggerbot_enabled; });
+s_trigger:keybind({ name = "hold key"; flag = "triggerbot_key"; default = config.combat.triggerbot_key or "XBUTTON1"; callback = function(v) on_keybind_set("triggerbot_key", v); end; });
+s_trigger:slider({ name = "delay"; flag = "triggerbot_delay"; min = 0; max = 300; default = config.combat.triggerbot_delay or 50; interval = 5; suffix = " ms"; });
+s_trigger:slider({ name = "radius"; flag = "triggerbot_radius"; min = 4; max = 40; default = config.combat.triggerbot_radius or 14; interval = 1; suffix = " px"; });
 
 local col_player_vis = tab_visuals:column();
 local col_world = tab_visuals:column();
 
 local s_player_esp = col_player_vis:section({ name = "player esp" });
-s_player_esp:toggle({
-	name = "enabled"; flag = "player_esp_enabled"; default = config.players.player_esp_enabled;
-	callback = function(v) notify("player esp " .. (v and "on" or "off")); end;
-});
+s_player_esp:toggle({ name = "enabled"; flag = "player_esp_enabled"; default = config.players.player_esp_enabled; });
 s_player_esp:toggle({ name = "boxes"; flag = "player_boxes"; default = config.players.player_boxes ~= false; });
 s_player_esp:toggle({ name = "health bar"; flag = "player_hp"; default = config.players.player_hp ~= false; });
 s_player_esp:toggle({ name = "names"; flag = "player_names"; default = config.players.player_names ~= false; });
-s_player_esp:toggle({ name = "distance"; flag = "player_distance"; default = config.players.player_distance ~= false; tip = "Show distance on name tags."; });
+s_player_esp:toggle({ name = "distance"; flag = "player_distance"; default = config.players.player_distance ~= false; });
 s_player_esp:slider({ name = "max dist"; flag = "player_max_dist"; min = 10; max = 2000; default = config.players.player_max_dist or 500; interval = 10; suffix = " st"; });
 add_rgb(s_player_esp, "player_esp", "esp", config.players.player_esp_color or { 255, 255, 255 });
 
@@ -647,36 +605,30 @@ local s_extra = col_player_vis:section({ name = "extra visuals" });
 s_extra:toggle({ name = "chinahat"; flag = "chinahat_enabled"; default = config.players.chinahat_enabled; });
 s_extra:toggle({ name = "rainbow hat"; flag = "chinahat_rainbow"; default = config.players.chinahat_rainbow; });
 add_rgb(s_extra, "chinahat", "hat", config.players.chinahat_color);
-s_extra:toggle({ name = "chams"; flag = "chams_enabled"; default = config.players.chams_enabled; tip = "Wireframe body boxes through walls."; });
+s_extra:toggle({ name = "chams"; flag = "chams_enabled"; default = config.players.chams_enabled; });
 add_rgb(s_extra, "chams_enemy", "enemy", config.players.chams_enemy_color);
 add_rgb(s_extra, "chams_team", "team", config.players.chams_team_color);
-s_extra:toggle({ name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled; tip = "Only show enemies."; });
+s_extra:toggle({ name = "team check"; flag = "teamcheck_enabled"; default = config.players.teamcheck_enabled; });
 
 local s_hud = col_world:section({ name = "hud" });
-s_hud:toggle({ name = "2d radar"; flag = "radar_enabled"; default = config.hud.radar_enabled ~= false; tip = "Drag header with LMB (menu open or hold Shift)."; });
-s_hud:toggle({ name = "snaplines"; flag = "snaplines"; default = config.hud.snaplines == true; tip = "Lines from crosshair to enemies."; });
+s_hud:toggle({ name = "2d radar"; flag = "radar_enabled"; default = config.hud.radar_enabled ~= false; });
+s_hud:toggle({ name = "snaplines"; flag = "snaplines"; default = config.hud.snaplines == true; });
 s_hud:toggle({ name = "custom crosshair"; flag = "crosshair_enabled"; default = config.hud.crosshair_enabled == true; });
 s_hud:dropdown({ name = "crosshair style"; flag = "crosshair_style"; items = { "gap cross", "cross", "dot", "circle" }; default = config.hud.crosshair_style or "gap cross"; });
 s_hud:slider({ name = "crosshair size"; flag = "crosshair_size"; min = 2; max = 24; default = config.hud.crosshair_size or 8; interval = 1; suffix = " px"; });
-s_hud:slider({ name = "crosshair gap"; flag = "crosshair_gap"; min = 0; max = 12; default = config.hud.crosshair_gap or 4; interval = 1; suffix = " px"; tip = "Center gap for gap cross style."; });
+s_hud:slider({ name = "crosshair gap"; flag = "crosshair_gap"; min = 0; max = 12; default = config.hud.crosshair_gap or 4; interval = 1; suffix = " px"; });
 add_rgb(s_hud, "crosshair", "cross", config.hud.crosshair_color or { 255, 255, 255 });
-s_hud:toggle({ name = "keybind hud"; flag = "keybind_hud"; default = config.hud.keybind_hud ~= false; tip = "Active binds panel. Drag header (menu open or Shift)."; });
-
-local s_world = col_world:section({ name = "world" });
-s_world:toggle({ name = "no fog"; flag = "no_fog"; default = config.world.no_fog; tip = "Reserved (no dx9 fog-write API)."; });
+s_hud:toggle({ name = "keybind hud"; flag = "keybind_hud"; default = config.hud.keybind_hud ~= false; });
 
 local s_master = col_world:section({ name = "master" });
-s_master:toggle({
-	name = "esp enabled"; flag = "esp_enabled"; default = config.settings.esp_enabled;
-	callback = function(v) notify("esp " .. (v and "on" or "off")); end;
-});
+s_master:toggle({ name = "esp enabled"; flag = "esp_enabled"; default = config.settings.esp_enabled; });
 
 local col_items_left = tab_items:column();
 local col_items_right = tab_items:column();
 
 local s_bombs = col_items_left:section({ name = "bombs" });
 s_bombs:toggle({ name = "bomb esp"; flag = "bombs_enabled"; default = config.items.bombs_enabled; });
-s_bombs:toggle({ name = "bomb timer"; flag = "bomb_timer"; default = config.items.bomb_timer ~= false; tip = "40s countdown. Drag bar while menu open or hold Shift."; });
+s_bombs:toggle({ name = "bomb timer"; flag = "bomb_timer"; default = config.items.bomb_timer ~= false; });
 add_rgb(s_bombs, "bombs", "bomb", config.items.bombs_color);
 
 local s_grenades = col_items_left:section({ name = "grenades" });
@@ -702,61 +654,16 @@ local col_config = tab_config:column();
 local col_config2 = tab_config:column();
 
 local s_config = col_config:section({ name = "config" });
-s_config:toggle({ name = "watermark"; flag = "watermark"; default = config.settings.watermark_enabled ~= false; tip = "Draggable FPS watermark."; });
-s_config:button({
-	name = "print flags";
-	callback = function()
-		local out = {};
-		for k, v in pairs(library.flags) do out[#out + 1] = k .. "=" .. tostring(v); end
-		table.sort(out);
-		notify(table.concat(out, "  ", 1, math.min(#out, 4)));
-	end;
-});
+s_config:toggle({ name = "watermark"; flag = "watermark"; default = config.settings.watermark_enabled ~= false; });
 
 local s_profiles = col_config2:section({ name = "profiles" });
-for slot = 1, 3 do
-	s_profiles:button({
-		name = "save " .. slot;
-		callback = function()
-			S.profiles[slot] = snapshot_flags();
-			notify("profile " .. slot .. " saved");
-		end;
-	});
-	s_profiles:button({
-		name = "load " .. slot;
-		callback = function()
-			if S.profiles[slot] then
-				apply_flags(S.profiles[slot]);
-				notify("profile " .. slot .. " loaded");
-			else
-				notify("profile " .. slot .. " empty");
-			end
-		end;
-	});
-end
-
-local s_reset = col_config2:section({ name = "reset" });
-s_reset:button({
-	name = "reset to defaults";
-	callback = function()
-		if S.default_flags then
-			apply_flags(S.default_flags);
-			notify("settings reset");
-		else
-			notify("defaults not ready");
-		end
-	end;
-});
-s_reset:button({
-	name = "version info";
-	callback = function() notify("CounterBlox UI v" .. BUILD); end;
-});
-s_reset:button({
-	name = "full reload tip";
-	callback = function()
-		notify("Set _G._cb_script=nil then re-run loader");
-	end;
-});
+s_profiles:button({ name = "save"; callback = function() S.profiles[1] = snapshot_flags(); notify("saved"); end; });
+s_profiles:button({ name = "load"; callback = function()
+	if S.profiles[1] then apply_flags(S.profiles[1]); notify("loaded"); else notify("empty"); end
+end; });
+s_profiles:button({ name = "reset"; callback = function()
+	if S.default_flags then apply_flags(S.default_flags); notify("reset"); end
+end; });
 
 sync_keybind_name("aimbot_key", "MBUTTON");
 sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1");
@@ -764,12 +671,9 @@ sync_keybind_name("triggerbot_key", config.combat.triggerbot_key or "XBUTTON1");
 if not S.greeted then
 	S.greeted = true;
 	S.default_flags = snapshot_flags();
-	notify("CounterBlox UI v" .. BUILD .. " loaded");
+	notify("v" .. BUILD);
 end
 
-----------------------------------------------------------------------
--- Drawing helpers
-----------------------------------------------------------------------
 local rainbowColors = {
 	{ 255, 0, 0 }, { 255, 127, 0 }, { 255, 255, 0 }, { 0, 255, 0 },
 	{ 0, 0, 255 }, { 75, 0, 130 }, { 148, 0, 211 },
@@ -847,9 +751,6 @@ local function draw_cham_box(position, cframe, size, color)
 	end
 end
 
-----------------------------------------------------------------------
--- Feature runners
-----------------------------------------------------------------------
 local function sync_aimbot_settings()
 	dx9.SetAimbotValue("fov", flag_num("aimbot_fov", 90));
 	dx9.SetAimbotValue("smoothness", math.max(1, flag_num("smoothing", 15)));
@@ -1349,9 +1250,6 @@ local function run_bomb_esp()
 	end
 end
 
-----------------------------------------------------------------------
--- World item scan (throttled) + draw (every frame — prevents strobe)
-----------------------------------------------------------------------
 local function scan_world_items()
 	if cache.frame % 2 ~= 0 then return; end
 	if not flag_on("esp_enabled") then return; end
@@ -1511,39 +1409,29 @@ local function draw_molotov_radius()
 	end
 end
 
-----------------------------------------------------------------------
--- Frame: process menu input first, then ESP (pcall so errors never block UI).
-----------------------------------------------------------------------
-window:Render();
-
 pcall(function()
 	refresh_cache();
-
-	local menu_up = menu_open();
-	if menu_up then
-		draw_keybind_hud();
-		return;
+	if not menu_open() then
+		scan_world_items();
+		scan_radius_items();
+		run_rcs();
+		run_aimbot();
+		run_triggerbot();
+		run_player_esp();
+		run_chinahat();
+		run_chams();
+		run_bomb_esp();
+		draw_weapon_esp();
+		draw_grenade_esp();
+		draw_midair_esp();
+		draw_smoke_radius();
+		draw_molotov_radius();
+		draw_fov_circle();
+		draw_crosshair();
+		draw_snaplines();
+		draw_radar();
+		draw_bomb_timer();
 	end
-
-	scan_world_items();
-	scan_radius_items();
-	run_rcs();
-	run_aimbot();
-	run_triggerbot();
-	run_player_esp();
-	run_chinahat();
-	run_chams();
-	run_bomb_esp();
-	draw_weapon_esp();
-	draw_grenade_esp();
-	draw_midair_esp();
-	draw_smoke_radius();
-	draw_molotov_radius();
-	draw_fov_circle();
-	draw_crosshair();
-	draw_snaplines();
-	draw_radar();
-	draw_bomb_timer();
 	draw_keybind_hud();
 end);
 
