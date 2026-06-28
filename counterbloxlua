@@ -1,6 +1,6 @@
 -- CounterBlox UI | GitHub script (counterbloxlua) — do NOT paste into dx9ware; loader.lua runs this.
 
-local BUILD = "4.5";
+local BUILD = "4.7";
 local BIND_SEP = " | ";
 local TRIG_KEY = "XBUTTON1";
 local M_PER_STUD = 0.28;
@@ -436,9 +436,12 @@ elseif not S.migrated_41 then
 	if type(pd) == "number" and pd > 300 then
 		library.flags.player_max_dist = math.floor(pd * M_PER_STUD);
 	end
-	for _, f in ipairs({ "aimbot_enabled", "aimbot_key", "aimbot_mode", "aim_bone", "only_rmb", "smoothing", "aimbot_sens", "aimbot_fov", "fov_circle", "rcs_enabled", "rcs_h", "rcs_v" }) do
+	for _, f in ipairs({ "aimbot_enabled", "aimbot_key", "aimbot_mode", "aim_bone", "only_rmb", "smoothing", "aimbot_sens", "aimbot_fov", "fov_circle", "rcs_enabled", "rcs_h", "rcs_v", "overlay_fps_limit" }) do
 		library.flags[f] = nil;
 	end
+elseif not S.migrated_46 then
+	S.migrated_46 = true;
+	library.flags.overlay_fps_limit = nil;
 end
 
 local RAINBOW = { {255,0,0},{255,127,0},{255,255,0},{0,255,0},{0,0,255},{75,0,130},{148,0,211} };
@@ -460,10 +463,24 @@ local function is_weapon_drop(item)
 		and valid(dx9.FindFirstChild(item, "Mag"));
 end
 
+local function item_pos(item)
+	local p = pos(item);
+	if p then return p; end
+	local h = dx9.FindFirstChild(item, "Handle") or dx9.FindFirstChild(item, "Handle2");
+	if h then
+		p = pos(h);
+		if p then return p; end
+	end
+	for _, ch in next, dx9.GetChildren(item) do
+		p = pos(ch);
+		if p then return p; end
+	end
+end
+
 local function nade_label_from_name(n)
 	if NADE_NAMES[n] then return n; end
 	local lower = n:lower();
-	if lower == "grenade" then return nil; end
+	if lower == "grenade" or lower == "model" then return nil; end
 	if lower:find("he") and lower:find("grenade") then return "HE Grenade"; end
 	if lower:find("smoke") then return "Smoke Grenade"; end
 	if lower:find("flash") then return "Flashbang"; end
@@ -476,19 +493,44 @@ local function classify_grenade(item)
 	if is_weapon_drop(item) then return; end
 	local n = dx9.GetName(item);
 	if WEAPONS[n] then return; end
+	local typ = dx9.GetType(item);
+	if typ ~= "MeshPart" and typ ~= "Part" then return; end
+
 	local label = nade_label_from_name(n);
-	if not label then return; end
-	if dx9.GetType(item) ~= "MeshPart" then return; end
-	if not valid(dx9.FindFirstChild(item, "Handle2")) then return; end
-	return label;
+	if label then return label; end
+
+	if typ == "MeshPart" and valid(dx9.FindFirstChild(item, "Handle2")) then
+		return "HE Grenade";
+	end
 end
 
-local function try_add_grenade(item, out)
+local function try_add_grenade(item, out, seen)
 	local label = classify_grenade(item);
 	if not label then return; end
-	local ip = pos(item);
-	if ip and in_range(ip, "grenades_max_dist", config.items.grenades_max_dist or 50) then
-		out[#out + 1] = { pos = ip, label = label };
+	local ip = item_pos(item);
+	if not ip or not in_range(ip, "grenades_max_dist", config.items.grenades_max_dist or 50) then return; end
+	local key = math.floor(ip.x) .. ":" .. math.floor(ip.y) .. ":" .. math.floor(ip.z);
+	if seen[key] then return; end
+	seen[key] = true;
+	out[#out + 1] = { pos = ip, label = label };
+end
+
+local function collect_fires(folder, out, seen, depth)
+	depth = depth or 0;
+	if depth > 4 or not folder then return; end
+	for _, ch in next, dx9.GetChildren(folder) do
+		local p = item_pos(ch);
+		if p then
+			local key = math.floor(p.x / 6) .. ":" .. math.floor(p.z / 6);
+			if not seen[key] then
+				seen[key] = true;
+				out[#out + 1] = { pos = p };
+			end
+		end
+		local typ = dx9.GetType(ch);
+		if typ == "Folder" or typ == "Model" then
+			collect_fires(ch, out, seen, depth + 1);
+		end
 	end
 end
 
@@ -740,32 +782,39 @@ local function draw_bomb_esp()
 end
 
 local function scan_world_items()
-	if cache.frame % 2 ~= 0 or not on("esp_enabled") then return; end
+	if not on("esp_enabled") then return; end
 	if not on("weapons_enabled") and not on("grenades_enabled") and not on("midair_grenades_enabled") then return; end
+
+	if cache.workspace then
+		cache.debris = dx9.FindFirstChild(cache.workspace, "Debris");
+	end
 
 	local items = S.items;
 	items.weapons, items.grenades, items.midair = {}, {}, {};
 	if not cache.debris then return; end
 
+	local nade_seen = {};
 	for _, item in next, dx9.GetChildren(cache.debris) do
 		if is_weapon_drop(item) then
-			local n = dx9.GetName(item);
-			local mp = pos(dx9.FindFirstChild(item, "Mag"));
-			if mp and in_range(mp, "weapons_max_dist", config.items.weapons_max_dist or 50) then
-				local txt = n;
-				if on("weapons_show_ammo") then
-					local a = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
-					if a then txt = n .. " [" .. a .. "]"; end
+			if on("weapons_enabled") then
+				local n = dx9.GetName(item);
+				local mp = item_pos(dx9.FindFirstChild(item, "Mag") or item);
+				if mp and in_range(mp, "weapons_max_dist", config.items.weapons_max_dist or 50) then
+					local txt = n;
+					if on("weapons_show_ammo") then
+						local a = dx9.GetIntValue(dx9.FindFirstChild(item, "Ammo"));
+						if a then txt = n .. " [" .. a .. "]"; end
+					end
+					items.weapons[#items.weapons + 1] = { pos = mp, text = txt };
 				end
-				items.weapons[#items.weapons + 1] = { pos = mp, text = txt };
 			end
 		elseif on("grenades_enabled") then
-			try_add_grenade(item, items.grenades);
+			try_add_grenade(item, items.grenades, nade_seen);
 		end
 		if on("midair_grenades_enabled") and dx9.GetType(item) == "MeshPart" then
 			local n = dx9.GetName(item);
 			if n == "Model" or n == "grenade" then
-				local ip = pos(item);
+				local ip = item_pos(item);
 				if ip and in_range(ip, "midair_max_dist", config.items.midair_max_dist or 80) then
 					items.midair[#items.midair + 1] = { pos = ip };
 				end
@@ -775,10 +824,10 @@ local function scan_world_items()
 end
 
 local function scan_radius_items()
-	if cache.frame % 2 ~= 0 or not on("esp_enabled") then return; end
+	if not on("esp_enabled") then return; end
 	if not on("smoke_radius_enabled") and not on("mol_radius_enabled") then return; end
 
-	if not cache.ray_ignore and cache.workspace then
+	if cache.workspace then
 		cache.ray_ignore = dx9.FindFirstChild(cache.workspace, "Ray_Ignore");
 	end
 
@@ -786,12 +835,14 @@ local function scan_radius_items()
 	items.smokes, items.fires = {}, {};
 	if not cache.ray_ignore then return; end
 
-	local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
-	if smokes and on("smoke_radius_enabled") then
-		for _, s in next, dx9.GetChildren(smokes) do
-			if dx9.GetName(s) == "Smoke" then
-				local p = pos(s);
-				if p then items.smokes[#items.smokes + 1] = { pos = p }; end
+	if on("smoke_radius_enabled") then
+		local smokes = dx9.FindFirstChild(cache.ray_ignore, "Smokes");
+		if smokes then
+			for _, s in next, dx9.GetChildren(smokes) do
+				if dx9.GetName(s) == "Smoke" then
+					local p = item_pos(s);
+					if p then items.smokes[#items.smokes + 1] = { pos = p }; end
+				end
 			end
 		end
 	end
@@ -799,12 +850,7 @@ local function scan_radius_items()
 	if on("mol_radius_enabled") then
 		local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
 		if fires then
-			for _, fire in next, dx9.GetChildren(fires) do
-				if dx9.GetName(fire) == "Fire" then
-					local p = pos(fire);
-					if p then items.fires[#items.fires + 1] = { pos = p }; end
-				end
-			end
+			collect_fires(fires, items.fires, {});
 		end
 	end
 end
@@ -830,8 +876,8 @@ local function draw_items_esp()
 		local c = rgb("smoke");
 		for _, e in ipairs(S.items.smokes) do
 			local p, gy, prev = e.pos, e.pos.y - 0.5;
-			for i = 0, 12 do
-				local a = i / 12 * 6.283;
+			for i = 0, 16 do
+				local a = i / 16 * 6.283;
 				local pt = w2s(p.x + 10.5 * math.cos(a), gy, p.z + 10.5 * math.sin(a));
 				if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, c); end
 				if pt then prev = { pt.x, pt.y }; end
@@ -841,12 +887,16 @@ local function draw_items_esp()
 	if on("mol_radius_enabled") then
 		local c = rgb("mol");
 		for _, e in ipairs(S.items.fires) do
-			local p, gy, prev = e.pos, e.pos.y - 0.5;
-			for i = 0, 12 do
-				local a = i / 12 * 6.283;
-				local pt = w2s(p.x + 12 * math.cos(a), gy, p.z + 12 * math.sin(a));
-				if pt and prev then dx9.DrawLine(prev, { pt.x, pt.y }, c); end
-				if pt then prev = { pt.x, pt.y }; end
+			local p, gy, hs = e.pos, e.pos.y - 0.5, 12;
+			local corners = {
+				w2s(p.x - hs, gy, p.z - hs), w2s(p.x + hs, gy, p.z - hs),
+				w2s(p.x + hs, gy, p.z + hs), w2s(p.x - hs, gy, p.z + hs),
+			};
+			if corners[1] and corners[2] and corners[3] and corners[4] then
+				for i = 1, 4 do
+					local a, b = corners[i], corners[i % 4 + 1];
+					dx9.DrawLine({ a.x, a.y }, { b.x, b.y }, c);
+				end
 			end
 		end
 	end
@@ -860,9 +910,9 @@ end
 
 pcall(function()
 	refresh_cache();
+	scan_world_items();
+	scan_radius_items();
 	if not menu_open() then
-		scan_world_items();
-		scan_radius_items();
 		run_triggerbot();
 		draw_player_esp();
 		draw_chinahat();
