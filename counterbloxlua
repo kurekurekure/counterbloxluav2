@@ -1,6 +1,6 @@
 -- CounterBlox UI | GitHub script (counterbloxlua) — do NOT paste into dx9ware; loader.lua runs this.
 
-local BUILD = "4.8";
+local BUILD = "4.9";
 local BIND_SEP = " | ";
 local TRIG_KEY = "XBUTTON1";
 local M_PER_STUD = 0.28;
@@ -54,6 +54,7 @@ if not S then
 		radar_x = nil; radar_y = nil; radar_drag = nil;
 		bomb_x = nil; bomb_y = nil; bomb_drag = nil;
 		kb_hud_x = nil; kb_hud_y = nil; kb_hud_drag = nil;
+		mol_track = {};
 		keybind_names = {}; keybind_labels = {}; profiles = {}; default_flags = nil;
 		cache = {
 			frame = 0; players = {}; player_entries = nil; player_entries_tick = -1;
@@ -67,6 +68,7 @@ S.items = S.items or { weapons = {}; grenades = {}; midair = {}; smokes = {}; fi
 S.keybind_names = S.keybind_names or {};
 S.keybind_labels = S.keybind_labels or {};
 S.profiles = S.profiles or {};
+S.mol_track = S.mol_track or {};
 S.trig_last = S.trig_last or S.triggerbot_last or 0;
 S.bomb_miss = S.bomb_miss or 0;
 local cache = S.cache;
@@ -501,16 +503,60 @@ local function try_add_grenade(item, out, seen)
 	out[#out + 1] = { pos = ip, label = label };
 end
 
-local MOL_CLUSTER_R = 20;
 local MOL_RADIUS = 12;
+local MOL_CLUSTER_R = 16;
+local MOL_MIN_PARTS = 4;
+local MOL_MAX_SPEED = 2;
+local MOL_STABLE_FRAMES = 5;
 
-local function cluster_molotov_fires(fires_folder, out)
-	local pts = {};
-	for _, ch in next, dx9.GetChildren(fires_folder) do
-		local p = item_pos(ch);
-		if p then pts[#pts + 1] = p; end
+local function part_pos(part)
+	local p = pos(part);
+	if p then return p; end
+	local cf = dx9.GetCFrame(part);
+	if type(cf) == "table" then
+		if cf.Position and cf.Position.x then return cf.Position; end
+		if cf.x and cf.y and cf.z and not cf.RightVector then return cf; end
 	end
-	if #pts == 0 then return; end
+	local a, b, c, d = dx9.GetCFrame(part);
+	if type(d) == "table" and d.x then return d; end
+	if type(a) == "table" and a.x and not a.RightVector then return a; end
+end
+
+local function is_stationary(part)
+	local v = dx9.GetVelocity(part);
+	if type(v) ~= "table" or not v.x then return true; end
+	return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) <= MOL_MAX_SPEED;
+end
+
+local function foreach_fire_part(fires_folder, fn)
+	for _, ch in next, dx9.GetChildren(fires_folder) do
+		if dx9.GetName(ch) == "Fire" then
+			fn(ch);
+		else
+			local typ = dx9.GetType(ch);
+			if typ == "Model" or typ == "Folder" then
+				for _, sub in next, dx9.GetChildren(ch) do
+					if dx9.GetName(sub) == "Fire" then fn(sub); end
+				end
+			end
+		end
+	end
+end
+
+local function scan_molotov_zones(fires_folder, out)
+	local pts = {};
+	local max_studs = m_to_studs(120);
+	foreach_fire_part(fires_folder, function(part)
+		if not is_stationary(part) then return; end
+		local p = part_pos(part);
+		if not p then return; end
+		if cache.local_pos and dist3(p, cache.local_pos) > max_studs then return; end
+		pts[#pts + 1] = p;
+	end);
+	if #pts == 0 then
+		S.mol_track = {};
+		return;
+	end
 
 	local clusters = {};
 	local r2 = MOL_CLUSTER_R * MOL_CLUSTER_R;
@@ -526,15 +572,32 @@ local function cluster_molotov_fires(fires_folder, out)
 		if best_i then
 			local c = clusters[best_i];
 			c.n = c.n + 1;
-			c.x, c.y, c.z = c.x + p.x, c.y + p.y, c.z + p.z;
+			c.x, c.z = c.x + p.x, c.z + p.z;
+			c.y = math.min(c.y, p.y);
 		else
 			clusters[#clusters + 1] = { x = p.x, y = p.y, z = p.z, n = 1 };
 		end
 	end
 
+	local seen, next_track = {}, {};
 	for _, c in ipairs(clusters) do
-		out[#out + 1] = { pos = { x = c.x / c.n, y = c.y / c.n, z = c.z / c.n } };
+		if c.n >= MOL_MIN_PARTS then
+			local cx, cz = c.x / c.n, c.z / c.n;
+			local key = math.floor(cx / 8) .. ":" .. math.floor(cz / 8);
+			seen[key] = true;
+			local t = S.mol_track[key] or { frames = 0 };
+			t.frames = t.frames + 1;
+			t.pos = { x = cx, y = c.y, z = cz };
+			next_track[key] = t;
+			if t.frames >= MOL_STABLE_FRAMES then
+				out[#out + 1] = { pos = t.pos };
+			end
+		end
 	end
+	for key in pairs(S.mol_track) do
+		if not seen[key] then next_track[key] = nil; end
+	end
+	S.mol_track = next_track;
 end
 
 local function box2d(x1, y1, x2, y2, c)
@@ -868,7 +931,7 @@ local function scan_radius_items()
 
 	if on("mol_radius_enabled") then
 		local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
-		if fires then cluster_molotov_fires(fires, items.fires); end
+		if fires then scan_molotov_zones(fires, items.fires); end
 	end
 end
 
