@@ -1,6 +1,6 @@
 -- CounterBlox UI | GitHub script (counterbloxlua) — do NOT paste into dx9ware; loader.lua runs this.
 
-local BUILD = "4.7";
+local BUILD = "4.8";
 local BIND_SEP = " | ";
 local TRIG_KEY = "XBUTTON1";
 local M_PER_STUD = 0.28;
@@ -57,7 +57,7 @@ if not S then
 		keybind_names = {}; keybind_labels = {}; profiles = {}; default_flags = nil;
 		cache = {
 			frame = 0; players = {}; player_entries = nil; player_entries_tick = -1;
-			local_pos = nil; local_team = nil; local_player = nil; local_yaw = 0;
+			local_pos = nil; local_team = nil; local_player = nil;
 			datamodel = nil; workspace = nil; debris = nil; ray_ignore = nil;
 		};
 	};
@@ -279,22 +279,8 @@ local function refresh_cache()
 		if rp and cache.local_pos and dist3(rp, cache.local_pos) < 2 then
 			cache.local_team = dx9.GetTeam(p);
 			cache.local_player = p;
-			local cf = root and cframe(root);
-			if cf and cf.LookVector then
-				cache.local_yaw = math.atan2(cf.LookVector.x, cf.LookVector.z);
-			end
 			break;
 		end
-	end
-end
-
-local function refresh_local_yaw()
-	if not cache.local_player then return; end
-	local char = dx9.GetCharacter(cache.local_player);
-	local root = char and dx9.FindFirstChild(char, "HumanoidRootPart");
-	local cf = root and cframe(root);
-	if cf and cf.LookVector then
-		cache.local_yaw = math.atan2(cf.LookVector.x, cf.LookVector.z);
 	end
 end
 
@@ -515,22 +501,39 @@ local function try_add_grenade(item, out, seen)
 	out[#out + 1] = { pos = ip, label = label };
 end
 
-local function collect_fires(folder, out, seen, depth)
-	depth = depth or 0;
-	if depth > 4 or not folder then return; end
-	for _, ch in next, dx9.GetChildren(folder) do
+local MOL_CLUSTER_R = 20;
+local MOL_RADIUS = 12;
+
+local function cluster_molotov_fires(fires_folder, out)
+	local pts = {};
+	for _, ch in next, dx9.GetChildren(fires_folder) do
 		local p = item_pos(ch);
-		if p then
-			local key = math.floor(p.x / 6) .. ":" .. math.floor(p.z / 6);
-			if not seen[key] then
-				seen[key] = true;
-				out[#out + 1] = { pos = p };
+		if p then pts[#pts + 1] = p; end
+	end
+	if #pts == 0 then return; end
+
+	local clusters = {};
+	local r2 = MOL_CLUSTER_R * MOL_CLUSTER_R;
+	for _, p in ipairs(pts) do
+		local best_i, best_d2;
+		for i, c in ipairs(clusters) do
+			local dx, dz = p.x - c.x, p.z - c.z;
+			local d2 = dx * dx + dz * dz;
+			if d2 <= r2 and (not best_d2 or d2 < best_d2) then
+				best_i, best_d2 = i, d2;
 			end
 		end
-		local typ = dx9.GetType(ch);
-		if typ == "Folder" or typ == "Model" then
-			collect_fires(ch, out, seen, depth + 1);
+		if best_i then
+			local c = clusters[best_i];
+			c.n = c.n + 1;
+			c.x, c.y, c.z = c.x + p.x, c.y + p.y, c.z + p.z;
+		else
+			clusters[#clusters + 1] = { x = p.x, y = p.y, z = p.z, n = 1 };
 		end
+	end
+
+	for _, c in ipairs(clusters) do
+		out[#out + 1] = { pos = { x = c.x / c.n, y = c.y / c.n, z = c.z / c.n } };
 	end
 end
 
@@ -626,32 +629,48 @@ local function draw_keybind_hud()
 	end
 end
 
+local function radar_axes()
+	local char = cache.local_player and dx9.GetCharacter(cache.local_player);
+	local root = char and dx9.FindFirstChild(char, "HumanoidRootPart");
+	local cf = root and cframe(root);
+	if not cf or not cf.LookVector or not cf.RightVector then return; end
+
+	local fx, fz = cf.LookVector.x, cf.LookVector.z;
+	local rx, rz = cf.RightVector.x, cf.RightVector.z;
+	local fl = math.sqrt(fx * fx + fz * fz);
+	local rl = math.sqrt(rx * rx + rz * rz);
+	if fl < 0.001 or rl < 0.001 then return; end
+	return fx / fl, fz / fl, rx / rl, rz / rl;
+end
+
 local function draw_radar()
 	if not on("radar_enabled") or not on("esp_enabled") or not cache.local_pos then return; end
-	refresh_local_yaw();
-	local sw, sh, size, hh = dx9.size().width, dx9.size().height, 118, 18;
+	local fwd_x, fwd_z, rgt_x, rgt_z = radar_axes();
+	if not fwd_x then return; end
+
+	local sw, sh, size, hh = dx9.size().width, dx9.size().height, 156, 20;
 	if not S.radar_x then S.radar_x, S.radar_y = sw - size - 14, 34; end
 	local rx, ry = panel_drag("radar_x", "radar_y", "radar_drag", math.floor(S.radar_x), math.floor(S.radar_y), size, hh);
-	S.radar_x = math.max(0, math.min(sw-size, S.radar_x)); S.radar_y = math.max(0, math.min(sh-size, S.radar_y));
+	S.radar_x = math.max(0, math.min(sw - size, S.radar_x)); S.radar_y = math.max(0, math.min(sh - size, S.radar_y));
 	rx, ry = math.floor(S.radar_x), math.floor(S.radar_y);
 	local my, mh = ry + hh, size - hh;
-	local cx, cy, scale = rx + size/2, my + mh/2, mh / 130;
-	local cos_y, sin_y = math.cos(-cache.local_yaw), math.sin(-cache.local_yaw);
+	local cx, cy = rx + size / 2, my + mh / 2;
+	local ring = mh / 2 - 8;
+	local scale = ring / 100;
 	dx9.DrawFilledBox({rx,ry},{rx+size,ry+size},{12,12,14}); dx9.DrawFilledBox({rx,ry},{rx+size,ry+hh},{18,18,22});
 	dx9.DrawFilledBox({rx,ry+hh-1},{rx+size,ry+hh},{121,96,180}); dx9.DrawBox({rx,ry},{rx+size,ry+size},{38,38,44});
 	dx9.DrawString({rx+8,ry+4},{200,200,210},"RADAR");
 	dx9.DrawLine({rx+1,cy},{rx+size-1,cy},{55,55,62}); dx9.DrawLine({cx,my+1},{cx,ry+size-1},{55,55,62});
-	local ring = mh/2 - 6;
-	dx9.DrawLine({cx,cy},{cx,cy-ring+4},{121,96,180});
+	dx9.DrawLine({cx,cy},{cx,cy-ring+6},{121,96,180});
 	for _, e in ipairs(get_players()) do
-		local rdx = e.root.x - cache.local_pos.x;
-		local rdz = e.root.z - cache.local_pos.z;
-		local rot_x = rdx * cos_y - rdz * sin_y;
-		local rot_z = rdx * sin_y + rdz * cos_y;
-		local dx, dz = rot_x * scale, -rot_z * scale;
-		local d = math.sqrt(dx*dx + dz*dz);
-		if d > ring - 2 and d > 0 then dx, dz = dx/d*(ring-2), dz/d*(ring-2); end
-		dx9.DrawCircle({cx+dx, cy+dz}, e.mate and {72,168,255} or {255,72,72}, 3);
+		local wdx = e.root.x - cache.local_pos.x;
+		local wdz = e.root.z - cache.local_pos.z;
+		local rel_r = wdx * rgt_x + wdz * rgt_z;
+		local rel_f = wdx * fwd_x + wdz * fwd_z;
+		local px, py = rel_r * scale, -rel_f * scale;
+		local d = math.sqrt(px * px + py * py);
+		if d > ring - 3 and d > 0 then px, py = px / d * (ring - 3), py / d * (ring - 3); end
+		dx9.DrawCircle({cx + px, cy + py}, e.mate and {72,168,255} or {255,72,72}, 3);
 	end
 	dx9.DrawCircle({cx,cy},{121,96,180},2);
 end
@@ -849,9 +868,7 @@ local function scan_radius_items()
 
 	if on("mol_radius_enabled") then
 		local fires = dx9.FindFirstChild(cache.ray_ignore, "Fires");
-		if fires then
-			collect_fires(fires, items.fires, {});
-		end
+		if fires then cluster_molotov_fires(fires, items.fires); end
 	end
 end
 
@@ -887,7 +904,7 @@ local function draw_items_esp()
 	if on("mol_radius_enabled") then
 		local c = rgb("mol");
 		for _, e in ipairs(S.items.fires) do
-			local p, gy, hs = e.pos, e.pos.y - 0.5, 12;
+			local p, gy, hs = e.pos, e.pos.y - 0.5, MOL_RADIUS;
 			local corners = {
 				w2s(p.x - hs, gy, p.z - hs), w2s(p.x + hs, gy, p.z - hs),
 				w2s(p.x + hs, gy, p.z + hs), w2s(p.x - hs, gy, p.z + hs),
